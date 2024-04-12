@@ -9,17 +9,12 @@ var ErrNoMoreSets = fmt.Errorf("no more result sets")
 var ErrZeroRowsExpectedOne = fmt.Errorf("query: 0 rows, expected 1: %w", sql.ErrNoRows)
 var ErrManyRowsExpectedOne = fmt.Errorf("query: more than 1 row (use sliceScanner?)")
 
-type RowScanner interface {
+type Target interface {
 	ScanRow(*sql.Rows) error
 }
 
-type Target interface {
-	RowScanner
-	Done() error
-}
-
 type Result[T any] interface {
-	RowScanner
+	Target
 	Result() (T, error)
 }
 

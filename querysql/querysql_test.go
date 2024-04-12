@@ -101,17 +101,17 @@ select newid()
 
 	rs := New(context.Background(), sqldb, qry, "world")
 
-	assert.Equal(t, 2, Must(Next(rs, SingleOf[int])))
-	assert.Equal(t, row{1, "one"}, Must(Next(rs, SingleOf[row])))
-	assert.Equal(t, []string{"hello", "world"}, Must(Next(rs, SliceOf[string])))
-	assert.Equal(t, []row(nil), Must(Next(rs, SliceOf[row])))
-	assert.Equal(t, []row{{1, "one"}, {2, "two"}}, Must(Next(rs, SliceOf[row])))
-	assert.Equal(t, []MyArray{{1, 2, 3, 4, 5}, {1, 2, 3, 4, 6}}, Must(Next(rs, SliceOf[MyArray])))
-	assert.Equal(t, "hello world", Must(Next(rs, SingleOf[string])))
-	assert.Equal(t, MyArray{1, 2, 3, 4, 5}, Must(Next(rs, SingleOf[MyArray])))
-	assert.Equal(t, 16, len(Must(Next(rs, SingleOf[[]uint8]))))
+	assert.Equal(t, 2, Must(NextResult(rs, SingleOf[int])))
+	assert.Equal(t, row{1, "one"}, Must(NextResult(rs, SingleOf[row])))
+	assert.Equal(t, []string{"hello", "world"}, Must(NextResult(rs, SliceOf[string])))
+	assert.Equal(t, []row(nil), Must(NextResult(rs, SliceOf[row])))
+	assert.Equal(t, []row{{1, "one"}, {2, "two"}}, Must(NextResult(rs, SliceOf[row])))
+	assert.Equal(t, []MyArray{{1, 2, 3, 4, 5}, {1, 2, 3, 4, 6}}, Must(NextResult(rs, SliceOf[MyArray])))
+	assert.Equal(t, "hello world", Must(NextResult(rs, SingleOf[string])))
+	assert.Equal(t, MyArray{1, 2, 3, 4, 5}, Must(NextResult(rs, SingleOf[MyArray])))
+	assert.Equal(t, 16, len(Must(NextResult(rs, SingleOf[[]uint8]))))
 
-	_, err := Next(rs, SingleOf[int])
+	_, err := NextResult(rs, SingleOf[int])
 	assert.Equal(t, ErrNoMoreSets, err)
 
 	rs.Close()
@@ -121,7 +121,7 @@ select newid()
 func TestEmptyScalar(t *testing.T) {
 	qry := `select 1 where 1 = 2`
 	rs := New(context.Background(), sqldb, qry)
-	_, err := Next(rs, SingleOf[int])
+	_, err := NextResult(rs, SingleOf[int])
 	assert.Equal(t, ErrZeroRowsExpectedOne, err)
 	assert.True(t, isClosed(rs.Rows))
 }
@@ -134,7 +134,7 @@ func TestEmptyStruct(t *testing.T) {
 
 	qry := `select 1 as X, 'one' as Y where 1 = 2`
 	rs := New(context.Background(), sqldb, qry)
-	_, err := Next(rs, SingleOf[row])
+	_, err := NextResult(rs, SingleOf[row])
 	assert.Equal(t, ErrZeroRowsExpectedOne, err)
 	assert.True(t, isClosed(rs.Rows))
 }
@@ -143,7 +143,7 @@ func TestManyScalar(t *testing.T) {
 	qry := `select 1 union all select 2`
 	rs := New(context.Background(), sqldb, qry)
 
-	_, err := Next(rs, SingleOf[int])
+	_, err := NextResult(rs, SingleOf[int])
 	assert.Equal(t, ErrManyRowsExpectedOne, err)
 	assert.True(t, isClosed(rs.Rows))
 }
@@ -152,7 +152,7 @@ func TestAutoClose(t *testing.T) {
 	qry := `select 1`
 	rs := AutoClose(New(context.Background(), sqldb, qry))
 
-	assert.Equal(t, 1, Must(Next(rs, SingleOf[int])))
+	assert.Equal(t, 1, Must(NextResult(rs, SingleOf[int])))
 	assert.True(t, isClosed(rs.Rows))
 }
 
@@ -209,9 +209,9 @@ func TestPropagateSyntaxError2(t *testing.T) {
 	rs := New(context.Background(), sqldb, `
 		syntax < error
 	`)
-	_, err := Next(rs, SingleOf[int])
+	_, err := NextResult(rs, SingleOf[int])
 	assert.Error(t, err)
-	_, err = Next(rs, SliceOf[int])
+	_, err = NextResult(rs, SliceOf[int])
 	assert.Error(t, err)
 }
 

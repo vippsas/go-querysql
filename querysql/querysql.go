@@ -73,10 +73,10 @@ func (rs *ResultSets) onReturn() error {
 	return nil
 }
 
-// Next reads the next result set from `rs`, into the type/scanner provided in the `typ`
+// NextResult reads the next result set from `rs`, into the type/scanner provided in the `typ`
 // argument. Typical arguments for `typ` is `SliceOf[int]`, `SingleOf[MyStruct]`,
 // `Call[MyStruct](func(MyStruct) error { ... })`
-func Next[T any](rs *ResultSets, typ func() Result[T]) (T, error) {
+func NextResult[T any](rs *ResultSets, typ func() Result[T]) (T, error) {
 	var zero T
 
 	if rs.Err != nil {
@@ -121,6 +121,40 @@ func Next[T any](rs *ResultSets, typ func() Result[T]) (T, error) {
 	return result, nil
 }
 
+// Next reads the next result set from `rs`, passing each row to `scanner`;
+// taking care of checking errors and advancing result sets. On errors, `rs`
+// will be closed. If AutoClose is used, `rs` will also be closed on successful return.
+func Next(rs *ResultSets, scanner Target) error {
+	if rs.Err != nil {
+		return rs.Err
+	}
+
+	success := false
+	defer func() {
+		if !success {
+			_ = rs.Rows.Close()
+		}
+	}()
+
+	if !rs.BeginResultSet() {
+		return ErrNoMoreSets
+	}
+
+	for rs.Rows.Next() {
+		if err := scanner.ScanRow(rs.Rows); err != nil {
+			return err
+		}
+	}
+	// important and easily forgotten final check on rows.Err()
+	if err := rs.Rows.Err(); err != nil {
+		return err
+	}
+
+	success = true // disable defer-Close
+
+	return rs.onReturn()
+}
+
 func Must[T any](val T, err error) T {
 	if err != nil {
 		panic(err)
@@ -133,7 +167,7 @@ func Must[T any](val T, err error) T {
 //
 
 func Single[T any](ctx context.Context, querier CtxQuerier, qry string, args ...any) (T, error) {
-	return Next[T](AutoClose(New(ctx, querier, qry, args...)), SingleOf[T])
+	return NextResult[T](AutoClose(New(ctx, querier, qry, args...)), SingleOf[T])
 }
 
 func MustSingle[T any](ctx context.Context, querier CtxQuerier, qry string, args ...any) T {
@@ -141,7 +175,7 @@ func MustSingle[T any](ctx context.Context, querier CtxQuerier, qry string, args
 }
 
 func Slice[T any](ctx context.Context, querier CtxQuerier, qry string, args ...any) ([]T, error) {
-	return Next(AutoClose(New(ctx, querier, qry, args...)), SliceOf[T])
+	return NextResult(AutoClose(New(ctx, querier, qry, args...)), SliceOf[T])
 }
 
 func MustSlice[T any](ctx context.Context, querier CtxQuerier, qry string, args ...any) []T {
@@ -149,7 +183,7 @@ func MustSlice[T any](ctx context.Context, querier CtxQuerier, qry string, args 
 }
 
 func Iter[T any](ctx context.Context, querier CtxQuerier, visit func(T) error, qry string, args ...any) error {
-	_, err := Next(AutoClose(New(ctx, querier, qry, args...)), Call(visit))
+	_, err := NextResult(AutoClose(New(ctx, querier, qry, args...)), Call(visit))
 	return err
 }
 
@@ -178,12 +212,12 @@ func Query2[T1 any, T2 any](
 	var zero1 T1
 	var zero2 T2
 
-	t1, err := Next(rs, type1)
+	t1, err := NextResult(rs, type1)
 	if err != nil {
 		return zero1, zero2, err
 	}
 
-	t2, err := Next(rs, type2)
+	t2, err := NextResult(rs, type2)
 	if err != nil {
 		return zero1, zero2, err
 	}
@@ -216,17 +250,17 @@ func Query3[T1 any, T2 any, T3 any](
 	var zero2 T2
 	var zero3 T3
 
-	t1, err := Next(rs, type1)
+	t1, err := NextResult(rs, type1)
 	if err != nil {
 		return zero1, zero2, zero3, err
 	}
 
-	t2, err := Next(rs, type2)
+	t2, err := NextResult(rs, type2)
 	if err != nil {
 		return zero1, zero2, zero3, err
 	}
 
-	t3, err := Next(rs, type3)
+	t3, err := NextResult(rs, type3)
 	if err != nil {
 		return zero1, zero2, zero3, err
 	}
@@ -261,22 +295,22 @@ func Query4[T1 any, T2 any, T3 any, T4 any](
 	var zero3 T3
 	var zero4 T4
 
-	t1, err := Next(rs, type1)
+	t1, err := NextResult(rs, type1)
 	if err != nil {
 		return zero1, zero2, zero3, zero4, err
 	}
 
-	t2, err := Next(rs, type2)
+	t2, err := NextResult(rs, type2)
 	if err != nil {
 		return zero1, zero2, zero3, zero4, err
 	}
 
-	t3, err := Next(rs, type3)
+	t3, err := NextResult(rs, type3)
 	if err != nil {
 		return zero1, zero2, zero3, zero4, err
 	}
 
-	t4, err := Next(rs, type4)
+	t4, err := NextResult(rs, type4)
 	if err != nil {
 		return zero1, zero2, zero3, zero4, err
 	}
@@ -288,7 +322,6 @@ func Query4[T1 any, T2 any, T3 any, T4 any](
 	return t1, t2, t3, t4, nil
 }
 
-/*
 func Query(
 	targets []Target,
 	ctx context.Context,
@@ -305,7 +338,7 @@ func Query(
 	}()
 
 	for _, target := range targets {
-		if _, err := Next(rs, target); err != nil {
+		if err := Next(rs, target); err != nil {
 			return err
 		}
 	}
@@ -314,6 +347,4 @@ func Query(
 		return err
 	}
 	return nil
-
 }
-*/
