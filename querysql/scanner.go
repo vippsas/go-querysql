@@ -18,15 +18,15 @@ type Result[T any] interface {
 	Result() (T, error)
 }
 
-type BaseResult[T any] struct {
+type RowScanner[T any] struct {
 	typeinfo
 	init         bool
-	row          T
+	target       *T
 	scanPointers []any
 }
 
 // scanRow calls rows.Scan to populate scanner.row
-func (scanner *BaseResult[T]) scanRow(rows *sql.Rows) error {
+func (scanner *RowScanner[T]) scanRow(rows *sql.Rows) error {
 	if !scanner.init {
 		scanner.init = true
 		scanner.typeinfo = inspectType[T]()
@@ -36,12 +36,12 @@ func (scanner *BaseResult[T]) scanRow(rows *sql.Rows) error {
 
 		if scanner.isStruct {
 			var err error
-			scanner.scanPointers, err = getPointersToFields(rows, &scanner.row)
+			scanner.scanPointers, err = getPointersToFields(rows, scanner.target)
 			if err != nil {
 				return err
 			}
 		} else {
-			scanner.scanPointers = []any{&scanner.row}
+			scanner.scanPointers = []any{scanner.target}
 		}
 	}
 
@@ -51,15 +51,34 @@ func (scanner *BaseResult[T]) scanRow(rows *sql.Rows) error {
 	return nil
 }
 
+//
+// single values
+//
+
 type singleScanner[T any] struct {
-	BaseResult[T]
+	RowScanner[T]
 	hasRead bool
 }
 
+func singleInto[T any](target *T) Result[T] {
+	result := &singleScanner[T]{}
+	result.target = target
+	return result
+}
+
+// SingleInto set up reading a single row into `target`. If there is not exactly 1 row
+// in the resultset an error is returned.
+func SingleInto[T any](target *T) Target {
+	result := &singleScanner[T]{}
+	result.target = target
+	return result
+}
+
 // SingleOf declares that you want to enforce that the resultset only has a single row,
-// and scan that single row into a value of type T.
+// and scan that single row into a value of type T that is returned.
 func SingleOf[T any]() Result[T] {
-	return &singleScanner[T]{}
+	var value T
+	return singleInto(&value)
 }
 
 func (rv *singleScanner[T]) Result() (T, error) {
@@ -67,7 +86,7 @@ func (rv *singleScanner[T]) Result() (T, error) {
 		var zero T
 		return zero, ErrZeroRowsExpectedOne
 	}
-	return rv.row, nil
+	return *rv.target, nil
 }
 
 func (rv *singleScanner[T]) ScanRow(rows *sql.Rows) error {
@@ -81,30 +100,56 @@ func (rv *singleScanner[T]) ScanRow(rows *sql.Rows) error {
 	return nil
 }
 
+//
+// slices
+//
+
 type sliceScanner[T any] struct {
-	BaseResult[T]
-	slice []T
+	RowScanner[T]
+	row          T
+	slicePointer *[]T
+}
+
+// SliceInto declares that you want to scan the result into a slice of type T
+// at the given `target`
+func sliceInto[T any](target *[]T) Result[[]T] {
+	result := &sliceScanner[T]{}
+	result.slicePointer = target
+	result.target = &result.row
+	return result
+}
+
+// SliceInto declares that you want to scan the result into a slice of type T
+// at the given `target`
+func SliceInto[T any](target *[]T) Target {
+	return sliceInto(target)
 }
 
 // SliceOf declares that you want to scan the result into a slice of type T.
 func SliceOf[T any]() Result[[]T] {
-	return &sliceScanner[T]{}
+	var result []T
+	return sliceInto(&result)
 }
 
 func (rv *sliceScanner[T]) Result() ([]T, error) {
-	return rv.slice, nil
+	return *rv.slicePointer, nil
 }
 
 func (rv *sliceScanner[T]) ScanRow(rows *sql.Rows) error {
 	if err := rv.scanRow(rows); err != nil {
 		return err
 	}
-	rv.slice = append(rv.slice, rv.row)
+	*rv.slicePointer = append(*rv.slicePointer, rv.row)
 	return nil
 }
 
+//
+// callbacks
+//
+
 type iterScanner[T any] struct {
-	BaseResult[T]
+	RowScanner[T]
+	row   T
 	count int
 	visit func(T) error
 }
@@ -127,39 +172,8 @@ func Call[T any](visit func(row T) error) func() Result[int] {
 	// return a factory function (this system is mainly used for syntax candy for SliceOf and SingleOf,
 	// although having a factory protocol can be useful for other reasons too),
 	return func() Result[int] {
-		return &iterScanner[T]{visit: visit}
+		result := &iterScanner[T]{visit: visit}
+		result.target = &result.row
+		return result
 	}
-}
-
-type pointerTarget[T any] struct {
-	target  *T
-	scanner Result[T]
-}
-
-func (pt pointerTarget[T]) ScanRow(rows *sql.Rows) error {
-	return pt.scanner.ScanRow(rows)
-}
-
-func (pt pointerTarget[T]) Done() error {
-	val, err := pt.scanner.Result()
-	if err != nil {
-		return err
-	}
-	*pt.target = val
-	return nil
-}
-
-func Into[T any](scanner func() Result[T], target *T) Target {
-	return pointerTarget[T]{
-		target:  target,
-		scanner: scanner(),
-	}
-}
-
-func SliceInto[T any](target *[]T) Target {
-	return Into[[]T](SliceOf[T], target)
-}
-
-func SingleInto[T any](target *T) Target {
-	return Into[T](SingleOf[T], target)
 }

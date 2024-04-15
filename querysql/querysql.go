@@ -77,48 +77,21 @@ func (rs *ResultSets) onReturn() error {
 // argument. Typical arguments for `typ` is `SliceOf[int]`, `SingleOf[MyStruct]`,
 // `Call[MyStruct](func(MyStruct) error { ... })`
 func NextResult[T any](rs *ResultSets, typ func() Result[T]) (T, error) {
-	var zero T
-
-	if rs.Err != nil {
-		return zero, rs.Err
-	}
-
-	success := false
-	defer func() {
-		if !success {
-			_ = rs.Rows.Close()
-		}
-	}()
-
-	if !rs.BeginResultSet() {
-		return zero, ErrNoMoreSets
-	}
-
-	scanner := typ() // just syntax candy to avoid ()
-
-	for rs.Rows.Next() {
-		if err := scanner.ScanRow(rs.Rows); err != nil {
-			return zero, err
-		}
-	}
-	// important and easily forgotten final check on rows.Err()
-	if err := rs.Rows.Err(); err != nil {
+	result := typ()
+	if err := Next(rs, result); err != nil {
+		var zero T
 		return zero, err
 	}
 
-	result, err := scanner.Result()
+	return result.Result()
+}
+
+func MustNextResult[T any](rs *ResultSets, typ func() Result[T]) T {
+	result, err := NextResult(rs, typ)
 	if err != nil {
-		return zero, err
+		panic(err)
 	}
-
-	success = true // disable defer-Close
-
-	err = rs.onReturn()
-	if err != nil {
-		return zero, err
-	}
-
-	return result, nil
+	return result
 }
 
 // Next reads the next result set from `rs`, passing each row to `scanner`;
@@ -155,7 +128,14 @@ func Next(rs *ResultSets, scanner Target) error {
 	return rs.onReturn()
 }
 
-func Must[T any](val T, err error) T {
+func MustNext(rs *ResultSets, scanner Target) {
+	err := Next(rs, scanner)
+	if err != nil {
+		panic(err)
+	}
+}
+
+func must[T any](val T, err error) T {
 	if err != nil {
 		panic(err)
 	}
@@ -171,7 +151,7 @@ func Single[T any](ctx context.Context, querier CtxQuerier, qry string, args ...
 }
 
 func MustSingle[T any](ctx context.Context, querier CtxQuerier, qry string, args ...any) T {
-	return Must(Single[T](ctx, querier, qry, args...))
+	return must(Single[T](ctx, querier, qry, args...))
 }
 
 func Slice[T any](ctx context.Context, querier CtxQuerier, qry string, args ...any) ([]T, error) {
@@ -179,7 +159,7 @@ func Slice[T any](ctx context.Context, querier CtxQuerier, qry string, args ...a
 }
 
 func MustSlice[T any](ctx context.Context, querier CtxQuerier, qry string, args ...any) []T {
-	return Must(Slice[T](ctx, querier, qry, args...))
+	return must(Slice[T](ctx, querier, qry, args...))
 }
 
 func Iter[T any](ctx context.Context, querier CtxQuerier, visit func(T) error, qry string, args ...any) error {
@@ -193,7 +173,33 @@ func MustIter[T any](ctx context.Context, querier CtxQuerier, visit func(T) erro
 	}
 }
 
-// Multi-select shorthands
+func Query(
+	targets []Target,
+	ctx context.Context,
+	querier CtxQuerier,
+	qry string,
+	args ...any,
+) error {
+	rs := New(ctx, querier, qry, args...)
+	var success bool
+	defer func() {
+		if !success {
+			defer rs.Close()
+		}
+	}()
+
+	for _, target := range targets {
+		if err := Next(rs, target); err != nil {
+			return err
+		}
+	}
+	success = true
+	if err := rs.Close(); err != nil {
+		return err
+	}
+	return nil
+}
+
 func Query2[T1 any, T2 any](
 	type1 func() Result[T1],
 	type2 func() Result[T2],
@@ -320,31 +326,4 @@ func Query4[T1 any, T2 any, T3 any, T4 any](
 		return zero1, zero2, zero3, zero4, err
 	}
 	return t1, t2, t3, t4, nil
-}
-
-func Query(
-	targets []Target,
-	ctx context.Context,
-	querier CtxQuerier,
-	qry string,
-	args ...any,
-) error {
-	rs := New(ctx, querier, qry, args...)
-	var success bool
-	defer func() {
-		if !success {
-			defer rs.Close()
-		}
-	}()
-
-	for _, target := range targets {
-		if err := Next(rs, target); err != nil {
-			return err
-		}
-	}
-	success = true
-	if err := rs.Close(); err != nil {
-		return err
-	}
-	return nil
 }

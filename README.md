@@ -66,23 +66,22 @@ singleInteger, sliceOfStruct, err := querysql.Query2(
 	querysql.SliceOf[MyStruct],
 	ctx, db, qry, arg1, arg2)
 ```
+We have defined `Query2`, `Query3` and `Query4` for this use up
+to 4 select statements.
 
-We have defined `Query2`, `Query3`, `Query4` for this style
-where the values are returned. If you wish more select statements
-than 4 or simply prefer the syntax, use
-the generic `Query` together with `Into`:
-
+If you prefer, you can instead scan into pointers; this also allows
+using a single function for any number of results or dynamic number
+of results:
 ```go
-var result1 int
-var result2 []MyStruct
-err := querysql.Query(
+var singleInteger int
+var sliceOfStruct []MyStruct
+singleInteger, sliceOfStruct, err := querysql.Query(
 	[]querysql.Target{
-		querysql.SingleInto(&target1),
-		querysql.SliceInto(&target2),
+		querysql.SingleInto(&singleInteger),
+		querysql.SliceInto(&sliceOfStruct),
 	},
 	ctx, db, qry, arg1, arg2)
 ```
-
 
 
 ## Advanced use
@@ -99,9 +98,9 @@ rs := querysql.New(ctx, dbi, `
 `)
 defer rs.Close()
 
-mode, err := querysql.Next(rs, querysql.SingleOf[string])
+mode, err := querysql.NextResult(rs, querysql.SingleOf[string])
 if mode == "ints" {
-	data, err := querysql.Next(rs, querysql.SliceOf[int])
+	data, err := querysql.NextResult(rs, querysql.SliceOf[int])
 	...
 } else if mode == "structs" {
 	type SomeStruct struct {

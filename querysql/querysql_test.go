@@ -66,7 +66,7 @@ func TestInspectType(t *testing.T) {
 	}
 }
 
-func TestMultipleRowsetsHappyDay(t *testing.T) {
+func TestMultipleRowsetsResultsHappyDay(t *testing.T) {
 	qry := `
 -- single scalar
 select 2;
@@ -101,17 +101,96 @@ select newid()
 
 	rs := New(context.Background(), sqldb, qry, "world")
 
-	assert.Equal(t, 2, Must(NextResult(rs, SingleOf[int])))
-	assert.Equal(t, row{1, "one"}, Must(NextResult(rs, SingleOf[row])))
-	assert.Equal(t, []string{"hello", "world"}, Must(NextResult(rs, SliceOf[string])))
-	assert.Equal(t, []row(nil), Must(NextResult(rs, SliceOf[row])))
-	assert.Equal(t, []row{{1, "one"}, {2, "two"}}, Must(NextResult(rs, SliceOf[row])))
-	assert.Equal(t, []MyArray{{1, 2, 3, 4, 5}, {1, 2, 3, 4, 6}}, Must(NextResult(rs, SliceOf[MyArray])))
-	assert.Equal(t, "hello world", Must(NextResult(rs, SingleOf[string])))
-	assert.Equal(t, MyArray{1, 2, 3, 4, 5}, Must(NextResult(rs, SingleOf[MyArray])))
-	assert.Equal(t, 16, len(Must(NextResult(rs, SingleOf[[]uint8]))))
+	assert.Equal(t, 2, MustNextResult(rs, SingleOf[int]))
+	assert.Equal(t, row{1, "one"}, MustNextResult(rs, SingleOf[row]))
+	assert.Equal(t, []string{"hello", "world"}, MustNextResult(rs, SliceOf[string]))
+	assert.Equal(t, []row(nil), MustNextResult(rs, SliceOf[row]))
+	assert.Equal(t, []row{{1, "one"}, {2, "two"}}, MustNextResult(rs, SliceOf[row]))
+	assert.Equal(t, []MyArray{{1, 2, 3, 4, 5}, {1, 2, 3, 4, 6}}, MustNextResult(rs, SliceOf[MyArray]))
+	assert.Equal(t, "hello world", MustNextResult(rs, SingleOf[string]))
+	assert.Equal(t, MyArray{1, 2, 3, 4, 5}, MustNextResult(rs, SingleOf[MyArray]))
+	assert.Equal(t, 16, len(MustNextResult(rs, SingleOf[[]uint8])))
 
 	_, err := NextResult(rs, SingleOf[int])
+	assert.Equal(t, ErrNoMoreSets, err)
+
+	rs.Close()
+	assert.True(t, isClosed(rs.Rows))
+}
+
+func TestMultipleRowsetsPointers(t *testing.T) {
+	qry := `
+-- single scalar
+select 2;
+
+-- single struct
+select X = 1, Y = 'one';
+
+-- multiple scalar
+select 'hello' union all select @p1;
+
+-- empty struct slice
+select X = 1, Y = 'one' where 1 = 0;
+
+-- multiple struct
+select X = 1, Y = 'one'
+union all select X = 2, Y = 'two';
+
+-- multiple sql.Scanner
+select 0x0102030405 union all select 0x0102030406
+
+-- more types of single scalar
+select concat('hello ', @p1);
+select 0x0102030405
+select newid()
+
+`
+
+	type row struct {
+		X int
+		Y string
+	}
+
+	rs := New(context.Background(), sqldb, qry, "world")
+
+	var intValue int
+	MustNext(rs, SingleInto(&intValue))
+	assert.Equal(t, 2, intValue)
+
+	var rowValue row
+	MustNext(rs, SingleInto(&rowValue))
+	assert.Equal(t, row{1, "one"}, rowValue)
+
+	var stringSlice []string
+	MustNext(rs, SliceInto(&stringSlice))
+	assert.Equal(t, []string{"hello", "world"}, stringSlice)
+
+	var structSlice []row
+	MustNext(rs, SliceInto(&structSlice))
+	assert.Equal(t, []row(nil), structSlice)
+
+	structSlice = nil
+	MustNext(rs, SliceInto(&structSlice))
+	assert.Equal(t, []row{{1, "one"}, {2, "two"}}, structSlice)
+
+	var myArraySlice []MyArray
+	MustNext(rs, SliceInto(&myArraySlice))
+	assert.Equal(t, []MyArray{{1, 2, 3, 4, 5}, {1, 2, 3, 4, 6}}, myArraySlice)
+
+	var stringValue string
+	MustNext(rs, SingleInto(&stringValue))
+	assert.Equal(t, "hello world", stringValue)
+
+	var myArray MyArray
+	MustNext(rs, SingleInto(&myArray))
+	assert.Equal(t, MyArray{1, 2, 3, 4, 5}, myArray)
+
+	var byteslice []uint8
+	MustNext(rs, SingleInto(&byteslice))
+	assert.Equal(t, 16, len(byteslice))
+
+	var dummy int
+	err := Next(rs, SingleInto(&dummy))
 	assert.Equal(t, ErrNoMoreSets, err)
 
 	rs.Close()
@@ -152,7 +231,7 @@ func TestAutoClose(t *testing.T) {
 	qry := `select 1`
 	rs := AutoClose(New(context.Background(), sqldb, qry))
 
-	assert.Equal(t, 1, Must(NextResult(rs, SingleOf[int])))
+	assert.Equal(t, 1, MustNextResult(rs, SingleOf[int]))
 	assert.True(t, isClosed(rs.Rows))
 }
 
@@ -183,6 +262,27 @@ func TestSingleCloseModeErrorPropagates(t *testing.T) {
 func TestQuery4(t *testing.T) {
 	a, b, c, d, err := Query4(
 		SingleOf[int], SliceOf[int], SliceOf[string], SliceOf[int],
+		context.Background(), sqldb, `
+		select 1;
+		select 3 union all select 4;
+		select 'hello';
+		select 1 where 1 = 0;
+	`)
+	require.NoError(t, err)
+	assert.Equal(t, 1, a)
+	assert.Equal(t, []int{3, 4}, b)
+	assert.Equal(t, []string{"hello"}, c)
+	assert.Equal(t, []int(nil), d)
+}
+
+func TestQueryPointers(t *testing.T) {
+	var a int
+	var b []int
+	var c []string
+	var d []int
+
+	err := Query(
+		[]Target{SingleInto(&a), SliceInto(&b), SliceInto(&c), SliceInto(&d)},
 		context.Background(), sqldb, `
 		select 1;
 		select 3 union all select 4;
