@@ -1,4 +1,4 @@
-// Package sqlquery is a newer interface to the capabilities in query ("query v2" in a sense).
+// Package querysql is a newer interface to the capabilities in query ("query v2" in a sense).
 // Intention is to also replace misc testutils.Scan functions ec.
 // May be separated into another repo longer term, but is convenient to test it together with testdb package for now.
 package querysql
@@ -8,7 +8,17 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"strings"
 )
+
+// RowsLogger takes a sql.Rows and logs it. A default implementation is available, but
+// sometimes one might wish to improve on the formatting of different data types, hence
+// this low level interface is available.
+//
+// The convention is that the first column will always contain the log level. You are
+// encouraged to treat dummy values (such as "1") as a default loglevel such as INFO,
+// for brevity during debugging
+type RowsLogger func(rows *sql.Rows) error
 
 // ResultSets is a tiny wrapper around sql.Rows to help managing whether to call NextResultSet or not.
 // It is fine to instantiate this struct yourself.
@@ -24,6 +34,15 @@ type ResultSets struct {
 	Err error
 	// Set CloseAfterNext to enable a mode where Rows is closed after the next resultset has been processed
 	CloseAfterNext bool
+
+	// Logger is used for outputting select statements with the special log column (see README)
+	// By default it is set by New to the value provided by Logger(ctx), but feel free to set or change it.
+	Logger RowsLogger
+
+	// By default, the use of an underscore column, "select _=1, ...", will trigger logging
+	// This lets you specify a custom key such as "loglevel" for the same purpose in addition.
+	// It will be compared with the lowercase name of the column.
+	LogKeyLowercase string
 }
 
 // hook for tests
@@ -40,6 +59,7 @@ func New(ctx context.Context, querier CtxQuerier, qry string, args ...any) *Resu
 		Rows:    rows,
 		Started: false,
 		Err:     err,
+		Logger:  Logger(ctx),
 	}
 }
 
@@ -71,6 +91,25 @@ func (rs *ResultSets) onReturn() error {
 		return rs.Close()
 	}
 	return nil
+}
+
+func (rs *ResultSets) hasLogColumn(cols []string) bool {
+	return len(cols) > 0 && (cols[0] == "_" || (rs.LogKeyLowercase != "" && strings.ToLower(cols[0]) == rs.LogKeyLowercase))
+}
+
+func (rs *ResultSets) processLogSelect() error {
+	if rs.Logger == nil {
+		// Just exhaust Rows...not an error to attempt logging to /dev/null
+		for rs.Rows.Next() {
+		}
+		return rs.Rows.Err()
+	}
+
+	if err := rs.Logger(rs.Rows); err != nil {
+		return err
+	}
+	// a well-written RowsLogger would return rs.Rows.Err(), but just be certain this isn't overlooked...
+	return rs.Rows.Err()
 }
 
 // NextResult reads the next result set from `rs`, into the type/scanner provided in the `typ`
@@ -109,8 +148,22 @@ func Next(rs *ResultSets, scanner Target) error {
 		}
 	}()
 
-	if !rs.BeginResultSet() {
-		return ErrNoMoreSets
+	for {
+
+		if !rs.BeginResultSet() {
+			return ErrNoMoreSets
+		}
+
+		cols, err := rs.Rows.Columns()
+		if err != nil {
+			return err
+		}
+
+		if rs.hasLogColumn(cols) {
+			rs.processLogSelect()
+		} else {
+			break
+		}
 	}
 
 	for rs.Rows.Next() {

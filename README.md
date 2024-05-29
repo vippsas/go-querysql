@@ -30,8 +30,8 @@ n := querysql.MustSingle[int](ctx, db, `select 1`)
 n, err := querysql.Single[int](ctx, db, `select 1`)
 
 // Read a slice of integers; can have any number of elements
-slice := querysql.Slice[int](ctx, db, `select @p1`, 3)
-slice, err := querysql.MustSlice[int](ctx, db, `select @p1`, 3)
+slice := querysql.MustSlice[int](ctx, db, `select @p1`, 3)
+slice, err := querysql.Slice[int](ctx, db, `select @p1`, 3)
 
 // Support for reading into structs, or slices of structs
 type row {
@@ -82,6 +82,38 @@ singleInteger, sliceOfStruct, err := querysql.Query(
 	},
 	ctx, db, qry, arg1, arg2)
 ```
+
+## Logging from SQL
+
+When writing longer multi-statement SQL queries the lack of
+debugging between statements can be a real problem. A work-around
+is provided in this library. Any target-less `select` statements
+where the name of the first column is `_` will be re-directed
+to a logger (if one is configured; and otherwise the data will be
+ignored). Example:
+
+```go
+qry := `
+    declare @a = 'world';
+
+    select A='one';
+    select _=1, hello=@a;  -- logging
+    select B='two';
+` 
+
+// configure a logger on ctx
+ctx := querysql.WithLogger(context.Background(), LogrusMSSQLLogger(logger))
+
+// do the query like normal; the middle select will be directed to the logger
+firstResult, secondResult, err := querysql.Query2(ctx, ...)
+```
+
+The LogrusMSSQLLogger above is, as given by the name, specific
+to one combination of tools, and you may need to write your
+own implementation.
+
+By convention the special column name `_` contains the log-level,
+i.e. you can set `_='debug'`, `_='warning'` and so on.
 
 
 ## Advanced use

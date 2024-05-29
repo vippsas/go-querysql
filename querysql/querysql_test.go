@@ -7,6 +7,7 @@ import (
 	"io"
 	"testing"
 
+	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -74,8 +75,20 @@ select 2;
 -- single struct
 select X = 1, Y = 'one';
 
+-- log something
+select _=1, x = 'hello world', y = 1;
+
 -- multiple scalar
 select 'hello' union all select @p1;
+
+-- log something
+select _=1, x = 'hello world2', y = 2;
+-- log something again without a result in between
+select _=1, x = 'hello world3', y = 3
+union all select _=2, x='hello world3', y= 4
+
+-- logging of 0 rows
+select _=1, x=1 from (select 1 as y where 1 = 0) tmp
 
 -- empty struct slice
 select X = 1, Y = 'one' where 1 = 0;
@@ -99,7 +112,11 @@ select newid()
 		Y string
 	}
 
-	rs := New(context.Background(), sqldb, qry, "world")
+	var hook LogHook
+	logger := logrus.StandardLogger()
+	logger.Hooks.Add(&hook)
+	ctx := WithLogger(context.Background(), LogrusMSSQLLogger(logger))
+	rs := New(ctx, sqldb, qry, "world")
 
 	assert.Equal(t, 2, MustNextResult(rs, SingleOf[int]))
 	assert.Equal(t, row{1, "one"}, MustNextResult(rs, SingleOf[row]))
@@ -116,6 +133,14 @@ select newid()
 
 	rs.Close()
 	assert.True(t, isClosed(rs.Rows))
+
+	assert.Equal(t, []logrus.Fields{
+		{"x": "hello world", "y": int64(1)},
+		{"x": "hello world2", "y": int64(2)},
+		{"x": "hello world3", "y": int64(3)},
+		{"x": "hello world3", "y": int64(4)},
+		{"_norows": true, "x": ""},
+	}, hook.lines)
 }
 
 func TestMultipleRowsetsPointers(t *testing.T) {
@@ -135,6 +160,10 @@ select X = 1, Y = 'one' where 1 = 0;
 -- multiple struct
 select X = 1, Y = 'one'
 union all select X = 2, Y = 'two';
+
+-- piggy-back a test for logging selects when no logger is configured on the ctx
+select _=1, this='will never be seen'
+union all select _=1, this='also silenced';
 
 -- multiple sql.Scanner
 select 0x0102030405 union all select 0x0102030406
