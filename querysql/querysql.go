@@ -179,7 +179,6 @@ func Next(rs *ResultSets, scanner Target) error {
 	}()
 
 	if !rs.started {
-		// Case 1
 		if err := rs.processAllLogSelects(); err != nil {
 			return err
 		}
