@@ -122,7 +122,7 @@ func MustNextResult[T any](rs *ResultSets, typ func() Result[T]) T {
 	return result
 }
 
-func (rs *ResultSets) processAllLogSelects() (noResultSets bool, err error) {
+func (rs *ResultSets) processAllLogSelects() (hadColumns bool, err error) {
 	for !rs.Done() {
 		var cols []string
 		cols, err = rs.Rows.Columns()
@@ -131,7 +131,7 @@ func (rs *ResultSets) processAllLogSelects() (noResultSets bool, err error) {
 		}
 		if len(cols) == 0 {
 			// This happens in the event that there's no result sets in the query at all
-			return true, nil
+			return false, nil
 		}
 
 		if rs.hasLogColumn(cols) {
@@ -144,10 +144,10 @@ func (rs *ResultSets) processAllLogSelects() (noResultSets bool, err error) {
 			}
 		} else {
 			// non-logging select; return
-			return false, nil
+			return true, nil
 		}
 	}
-	return false, nil
+	return true, nil
 }
 
 func (rs *ResultSets) Done() bool {
@@ -184,11 +184,11 @@ func Next(rs *ResultSets, scanner Target) error {
 	}()
 
 	if !rs.started {
-		noResultSets, err := rs.processAllLogSelects()
+		hadColumns, err := rs.processAllLogSelects()
 		if err != nil {
 			return err
 		}
-		if noResultSets {
+		if !hadColumns {
 			// the *sql.Rows interface typically treats a 'select' with 0 rows and the lack of a select
 			// very similar; but there is a slight difference in whether Columns() is available or not
 			// We make use of this to give a consistent API where you always get ErrNoMoreSets if a `select`
