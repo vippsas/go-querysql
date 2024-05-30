@@ -2,7 +2,7 @@
 
 The querysql package provides several layers; all of them
 provide safety against common mistakes and avoids a lot of iterator
-boilerplate.
+boilerplate. Also included is a convenient logging mechanism.
 
 All of the methods allows conveniently fetching results into
 your own structs, using reflection.
@@ -30,8 +30,8 @@ n := querysql.MustSingle[int](ctx, db, `select 1`)
 n, err := querysql.Single[int](ctx, db, `select 1`)
 
 // Read a slice of integers; can have any number of elements
-slice := querysql.Slice[int](ctx, db, `select @p1`, 3)
-slice, err := querysql.MustSlice[int](ctx, db, `select @p1`, 3)
+slice := querysql.MustSlice[int](ctx, db, `select @p1`, 3)
+slice, err := querysql.Slice[int](ctx, db, `select @p1`, 3)
 
 // Support for reading into structs, or slices of structs
 type row {
@@ -46,6 +46,9 @@ err := querysql.QueryIter(ctx, db, func(row int) error {
 	fmt.Println("Row %d", row)
 }, `select 1 union all select 2`)
 ```
+
+This mode still supports [logging](#logging-from-sql) and will return `ErrNotDone`
+if there are several non-logging select statements.
 
 ## Multiple select statements
 
@@ -83,6 +86,45 @@ singleInteger, sliceOfStruct, err := querysql.Query(
 	ctx, db, qry, arg1, arg2)
 ```
 
+## Logging from SQL
+
+When writing longer multi-statement SQL queries the lack of
+debugging between statements can be a real problem. A work-around
+is provided in this library. Any target-less `select` statements
+where the name of the first column is `_` will be re-directed
+to a logger (if one is configured; and otherwise the data will be
+ignored). Example:
+
+```go
+qry := `
+    declare @a = 'world';
+
+    select A='one';
+
+    -- logging
+    select _=1, hello=@a;
+    
+    select B='two';
+
+    -- log one entry per row, at a non-standard level
+    select _=1, hello=@a from SomeTable;
+
+` 
+
+// configure a logger on ctx
+ctx := querysql.WithLogger(context.Background(), LogrusMSSQLLogger(logger, logrus.InfoLevel))
+
+// do the query like normal; the middle select will be directed to the logger
+firstResult, secondResult, err := querysql.Query2(ctx, ...)
+```
+
+The LogrusMSSQLLogger above is, as given by the name, specific
+to one combination of tools, and you may need to write your
+own implementation of `RowsLogger` based on the one provided in this library.
+The `*sql.Rows` is passed straight through to the `RowsLogger`,
+but by convention the first column in the result will be the special
+column `_`, which may either contain a log-level (`info`, `debug`, `warning`, `error`)
+or some bogus data (such as `1` above) to use a default log level.
 
 ## Advanced use
 
@@ -96,6 +138,9 @@ rs := querysql.New(ctx, dbi, `
 
     select 1 union all select 2;
 `)
+// rs is automatically closed after processing the last select statement,
+// but it is still a good idea to defer a Close in case you do not process
+// all the select statements
 defer rs.Close()
 
 mode, err := querysql.NextResult(rs, querysql.SingleOf[string])
@@ -114,8 +159,14 @@ if mode == "ints" {
 }
 ```
 
+You may also process a dynamic number of results; `rs.Done()` will be be true
+when there are no more result sets available. At this point, `rs` has also been
+automatically closed; although it is still a good idea to `defer rs.Close()` in
+case you do not reach the point where `rs.Done() == true`.
+
 
 ## Future plans
 
 * Allow querying directly into `map` types, using the first columns
   as the key
+* Automatically deserialize XML or JSON results from SQL to structs

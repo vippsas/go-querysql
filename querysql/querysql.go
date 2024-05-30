@@ -1,4 +1,4 @@
-// Package sqlquery is a newer interface to the capabilities in query ("query v2" in a sense).
+// Package querysql is a newer interface to the capabilities in query ("query v2" in a sense).
 // Intention is to also replace misc testutils.Scan functions ec.
 // May be separated into another repo longer term, but is convenient to test it together with testdb package for now.
 package querysql
@@ -8,7 +8,20 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"strings"
 )
+
+var ErrNotDone = fmt.Errorf("there are more result sets after reading last expected result")
+var ErrNoMoreSets = fmt.Errorf("no more result sets")
+
+// RowsLogger takes a sql.Rows and logs it. A default implementation is available, but
+// sometimes one might wish to improve on the formatting of different data types, hence
+// this low level interface is available.
+//
+// The convention is that the first column will always contain the log level. You are
+// encouraged to treat dummy values (such as "1") as a default loglevel such as INFO,
+// for brevity during debugging
+type RowsLogger func(rows *sql.Rows) error
 
 // ResultSets is a tiny wrapper around sql.Rows to help managing whether to call NextResultSet or not.
 // It is fine to instantiate this struct yourself.
@@ -17,13 +30,22 @@ import (
 // prefixed with ScanRow; NextStructSlice, NextInt, etc
 type ResultSets struct {
 	Rows *sql.Rows
-	// Started should be set to true if Rows has already been exhausted for one rowset, and is ready for a call
-	// to NextResultSet.
-	Started bool
 	// Err is set to defer errors from constructors until the first method call
 	Err error
-	// Set CloseAfterNext to enable a mode where Rows is closed after the next resultset has been processed
-	CloseAfterNext bool
+
+	// Set DoneAfterNext to enable a mode where an error is returned if we did not exhaust the resultset
+	DoneAfterNext bool
+
+	// Logger is used for outputting select statements with the special log column (see README)
+	// By default it is set by New to the value provided by Logger(ctx), but feel free to set or change it.
+	Logger RowsLogger
+
+	// By default, the use of an underscore column, "select _=1, ...", will trigger logging
+	// This lets you specify a custom key such as "loglevel" for the same purpose in addition.
+	// It will be compared with the lowercase name of the column.
+	LogKeyLowercase string
+
+	started bool
 }
 
 // hook for tests
@@ -38,39 +60,45 @@ func New(ctx context.Context, querier CtxQuerier, qry string, args ...any) *Resu
 	}
 	return &ResultSets{
 		Rows:    rows,
-		Started: false,
+		started: false,
 		Err:     err,
+		Logger:  Logger(ctx),
 	}
 }
 
-func AutoClose(rs *ResultSets) *ResultSets {
-	rs.CloseAfterNext = true
+// EnsureDoneAfterNext sets the DoneAfterNext flag. The receiver rs is returned for syntactical
+// brevity, a copy is not made
+func (rs *ResultSets) EnsureDoneAfterNext() *ResultSets {
+	rs.DoneAfterNext = true
 	return rs
 }
 
 func (rs *ResultSets) Close() error {
-	if rs.Rows != nil {
-		return _closeHook(rs.Rows)
+	rows := rs.Rows
+	rs.Rows = nil
+	if rows != nil {
+		return _closeHook(rows)
 	}
 	return nil
 }
 
-// BeginResultSet is like sql.Rows.NextResultSet, except it should be called *before*
-// every result, instead of after
-func (rs *ResultSets) BeginResultSet() bool {
-	if rs.Started {
-		return rs.Rows.NextResultSet()
-	} else {
-		rs.Started = true
-		return true
-	}
+func (rs *ResultSets) hasLogColumn(cols []string) bool {
+	return len(cols) > 0 && (cols[0] == "_" || (rs.LogKeyLowercase != "" && strings.ToLower(cols[0]) == rs.LogKeyLowercase))
 }
 
-func (rs *ResultSets) onReturn() error {
-	if rs.CloseAfterNext {
-		return rs.Close()
+func (rs *ResultSets) processLogSelect() error {
+	if rs.Logger == nil {
+		// Just exhaust Rows...not an error to attempt logging to /dev/null
+		for rs.Rows.Next() {
+		}
+		return rs.Rows.Err()
 	}
-	return nil
+
+	if err := rs.Logger(rs.Rows); err != nil {
+		return err
+	}
+	// a well-written RowsLogger would return rs.Rows.Err(), but just be certain this isn't overlooked...
+	return rs.Rows.Err()
 }
 
 // NextResult reads the next result set from `rs`, into the type/scanner provided in the `typ`
@@ -94,24 +122,76 @@ func MustNextResult[T any](rs *ResultSets, typ func() Result[T]) T {
 	return result
 }
 
+func (rs *ResultSets) processAllLogSelects() error {
+	for !rs.Done() {
+		cols, err := rs.Rows.Columns()
+		if err != nil {
+			return err
+		}
+
+		if rs.hasLogColumn(cols) {
+			if err = rs.processLogSelect(); err != nil {
+				return err
+			}
+
+			if err = rs.nextResultSet(); err != nil {
+				return err
+			}
+		} else {
+			// non-logging select; return
+			return nil
+		}
+	}
+	return nil
+}
+
+func (rs *ResultSets) Done() bool {
+	return rs.Rows == nil
+}
+
+func (rs *ResultSets) nextResultSet() error {
+	if rs.Rows.NextResultSet() {
+		return nil
+	} else {
+		// we have exhausted the results; automatically close Rows; this also ensures Done() returns true
+		return rs.Close()
+	}
+}
+
 // Next reads the next result set from `rs`, passing each row to `scanner`;
 // taking care of checking errors and advancing result sets. On errors, `rs`
-// will be closed. If AutoClose is used, `rs` will also be closed on successful return.
+// will be closed. If EnsureDoneAfterNext is used, `rs` will also be closed on successful return.
 func Next(rs *ResultSets, scanner Target) error {
 	if rs.Err != nil {
 		return rs.Err
 	}
 
+	// When we enter this function one of the following will be the case:
+	// 1) We are at the beginning of using rs.Rows
+	// 2) rs.Rows.NextResultSet() was called, returned true, and there was another result set ready for us
+	// 3) rs.Rows.NextResultSet() was called, returned false, and we have done a close and rs.Rows is nil
+
 	success := false
 	defer func() {
 		if !success {
-			_ = rs.Rows.Close()
+			_ = rs.Close()
 		}
 	}()
 
-	if !rs.BeginResultSet() {
+	if !rs.started {
+		if err := rs.processAllLogSelects(); err != nil {
+			return err
+		}
+		rs.started = true
+	}
+
+	// Now we are either at end....
+	if rs.Done() {
+		success = true // disable defer-close, already closed
 		return ErrNoMoreSets
 	}
+
+	// ...or it's a non-logging select, which we handle:
 
 	for rs.Rows.Next() {
 		if err := scanner.ScanRow(rs.Rows); err != nil {
@@ -123,9 +203,23 @@ func Next(rs *ResultSets, scanner Target) error {
 		return err
 	}
 
+	if err := rs.nextResultSet(); err != nil {
+		return err
+	}
+
+	if err := rs.processAllLogSelects(); err != nil {
+		return err
+	}
+
 	success = true // disable defer-Close
 
-	return rs.onReturn()
+	if rs.DoneAfterNext {
+		if !rs.Done() {
+			_ = rs.Close()
+			return ErrNotDone
+		}
+	}
+	return nil
 }
 
 func MustNext(rs *ResultSets, scanner Target) {
@@ -147,7 +241,7 @@ func must[T any](val T, err error) T {
 //
 
 func Single[T any](ctx context.Context, querier CtxQuerier, qry string, args ...any) (T, error) {
-	return NextResult[T](AutoClose(New(ctx, querier, qry, args...)), SingleOf[T])
+	return NextResult[T](New(ctx, querier, qry, args...).EnsureDoneAfterNext(), SingleOf[T])
 }
 
 func MustSingle[T any](ctx context.Context, querier CtxQuerier, qry string, args ...any) T {
@@ -155,7 +249,7 @@ func MustSingle[T any](ctx context.Context, querier CtxQuerier, qry string, args
 }
 
 func Slice[T any](ctx context.Context, querier CtxQuerier, qry string, args ...any) ([]T, error) {
-	return NextResult(AutoClose(New(ctx, querier, qry, args...)), SliceOf[T])
+	return NextResult(New(ctx, querier, qry, args...).EnsureDoneAfterNext(), SliceOf[T])
 }
 
 func MustSlice[T any](ctx context.Context, querier CtxQuerier, qry string, args ...any) []T {
@@ -163,7 +257,7 @@ func MustSlice[T any](ctx context.Context, querier CtxQuerier, qry string, args 
 }
 
 func Iter[T any](ctx context.Context, querier CtxQuerier, visit func(T) error, qry string, args ...any) error {
-	_, err := NextResult(AutoClose(New(ctx, querier, qry, args...)), Call(visit))
+	_, err := NextResult(New(ctx, querier, qry, args...).EnsureDoneAfterNext(), Call(visit))
 	return err
 }
 

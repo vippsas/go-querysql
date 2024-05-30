@@ -7,6 +7,7 @@ import (
 	"io"
 	"testing"
 
+	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -74,8 +75,20 @@ select 2;
 -- single struct
 select X = 1, Y = 'one';
 
+-- log something
+select _=1, x = 'hello world', y = 1;
+
 -- multiple scalar
 select 'hello' union all select @p1;
+
+-- log something
+select _=1, x = 'hello world2', y = 2;
+-- log something again without a result in between
+select _=1, x = 'hello world3', y = 3
+union all select _=2, x='hello world3', y= 4
+
+-- logging of 0 rows
+select _=1, x=1 from (select 1 as y where 1 = 0) tmp
 
 -- empty struct slice
 select X = 1, Y = 'one' where 1 = 0;
@@ -92,6 +105,9 @@ select concat('hello ', @p1);
 select 0x0102030405
 select newid()
 
+-- logging in the end
+select _=1, log='at end'
+
 `
 
 	type row struct {
@@ -99,7 +115,12 @@ select newid()
 		Y string
 	}
 
-	rs := New(context.Background(), sqldb, qry, "world")
+	var hook LogHook
+	logger := logrus.StandardLogger()
+	logger.Hooks.Add(&hook)
+	ctx := WithLogger(context.Background(), LogrusMSSQLLogger(logger, logrus.InfoLevel))
+	rs := New(ctx, sqldb, qry, "world")
+	rows := rs.Rows
 
 	assert.Equal(t, 2, MustNextResult(rs, SingleOf[int]))
 	assert.Equal(t, row{1, "one"}, MustNextResult(rs, SingleOf[row]))
@@ -111,11 +132,24 @@ select newid()
 	assert.Equal(t, MyArray{1, 2, 3, 4, 5}, MustNextResult(rs, SingleOf[MyArray]))
 	assert.Equal(t, 16, len(MustNextResult(rs, SingleOf[[]uint8])))
 
+	// Check that we have exhausted the logging select before we do the call that gets ErrNoMoreSets
+	assert.Equal(t, []logrus.Fields{
+		{"x": "hello world", "y": int64(1)},
+		{"x": "hello world2", "y": int64(2)},
+		{"x": "hello world3", "y": int64(3)},
+		{"x": "hello world3", "y": int64(4)},
+		{"_norows": true, "x": ""},
+		{"log": "at end"},
+	}, hook.lines)
+
 	_, err := NextResult(rs, SingleOf[int])
 	assert.Equal(t, ErrNoMoreSets, err)
+	assert.True(t, isClosed(rows))
+	assert.True(t, rs.Done())
 
 	rs.Close()
-	assert.True(t, isClosed(rs.Rows))
+	assert.True(t, isClosed(rows))
+
 }
 
 func TestMultipleRowsetsPointers(t *testing.T) {
@@ -136,6 +170,10 @@ select X = 1, Y = 'one' where 1 = 0;
 select X = 1, Y = 'one'
 union all select X = 2, Y = 'two';
 
+-- piggy-back a test for logging selects when no logger is configured on the ctx
+select _=1, this='will never be seen'
+union all select _=1, this='also silenced';
+
 -- multiple sql.Scanner
 select 0x0102030405 union all select 0x0102030406
 
@@ -152,6 +190,7 @@ select newid()
 	}
 
 	rs := New(context.Background(), sqldb, qry, "world")
+	rows := rs.Rows
 
 	var intValue int
 	MustNext(rs, SingleInto(&intValue))
@@ -193,16 +232,17 @@ select newid()
 	err := Next(rs, SingleInto(&dummy))
 	assert.Equal(t, ErrNoMoreSets, err)
 
-	rs.Close()
-	assert.True(t, isClosed(rs.Rows))
+	assert.True(t, rs.Done())
+	assert.True(t, isClosed(rows))
 }
 
 func TestEmptyScalar(t *testing.T) {
 	qry := `select 1 where 1 = 2`
 	rs := New(context.Background(), sqldb, qry)
+	rows := rs.Rows
 	_, err := NextResult(rs, SingleOf[int])
 	assert.Equal(t, ErrZeroRowsExpectedOne, err)
-	assert.True(t, isClosed(rs.Rows))
+	assert.True(t, isClosed(rows))
 }
 
 func TestEmptyStruct(t *testing.T) {
@@ -213,26 +253,40 @@ func TestEmptyStruct(t *testing.T) {
 
 	qry := `select 1 as X, 'one' as Y where 1 = 2`
 	rs := New(context.Background(), sqldb, qry)
+	rows := rs.Rows
 	_, err := NextResult(rs, SingleOf[row])
 	assert.Equal(t, ErrZeroRowsExpectedOne, err)
-	assert.True(t, isClosed(rs.Rows))
+	assert.True(t, isClosed(rows))
+	assert.True(t, rs.Done())
 }
 
 func TestManyScalar(t *testing.T) {
 	qry := `select 1 union all select 2`
 	rs := New(context.Background(), sqldb, qry)
+	rows := rs.Rows
 
 	_, err := NextResult(rs, SingleOf[int])
 	assert.Equal(t, ErrManyRowsExpectedOne, err)
-	assert.True(t, isClosed(rs.Rows))
+	assert.True(t, isClosed(rows))
+	assert.True(t, rs.Done())
 }
 
 func TestAutoClose(t *testing.T) {
+	// automatically close rows when all results are read
 	qry := `select 1`
-	rs := AutoClose(New(context.Background(), sqldb, qry))
+	rs := New(context.Background(), sqldb, qry)
+	rows := rs.Rows
 
 	assert.Equal(t, 1, MustNextResult(rs, SingleOf[int]))
-	assert.True(t, isClosed(rs.Rows))
+	assert.True(t, isClosed(rows))
+	assert.True(t, rs.Rows == nil)
+}
+
+func TestEnsureDoneAfterNext(t *testing.T) {
+	qry := `select 1; select 2;`
+	_, err := Single[int](context.Background(), sqldb, qry)
+	require.Error(t, err)
+	assert.Equal(t, ErrNotDone, err)
 }
 
 func TestSingleCloseModeErrorPropagates(t *testing.T) {
