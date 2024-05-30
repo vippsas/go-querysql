@@ -11,7 +11,7 @@ import (
 )
 
 // LogrusMSSQLLogger returns a basic RowsLogger suitable for the combination of MS SQL and logrus
-func LogrusMSSQLLogger(logger logrus.FieldLogger) RowsLogger {
+func LogrusMSSQLLogger(logger logrus.FieldLogger, defaultLogLevel logrus.Level) RowsLogger {
 	return func(rows *sql.Rows) error {
 		var logLevel string
 
@@ -41,7 +41,7 @@ func LogrusMSSQLLogger(logger logrus.FieldLogger) RowsLogger {
 			}
 			parsedLogLevel, err := logrus.ParseLevel(logLevel)
 			if err != nil {
-				parsedLogLevel = logrus.InfoLevel
+				parsedLogLevel = defaultLogLevel
 			}
 
 			sublogger := logger
@@ -66,16 +66,7 @@ func LogrusMSSQLLogger(logger logrus.FieldLogger) RowsLogger {
 				}
 				sublogger = sublogger.WithField(cols[i], value)
 			}
-			switch parsedLogLevel {
-			case logrus.DebugLevel:
-				sublogger.Debug()
-			case logrus.InfoLevel:
-				sublogger.Info()
-			case logrus.WarnLevel:
-				sublogger.Warning()
-			case logrus.ErrorLevel:
-				sublogger.Error()
-			}
+			logrusEmitLogEntry(sublogger, parsedLogLevel)
 		}
 		if err = rows.Err(); err != nil {
 			return err
@@ -89,9 +80,22 @@ func LogrusMSSQLLogger(logger logrus.FieldLogger) RowsLogger {
 			for _, col := range cols[1:] {
 				l = l.WithField(col, "")
 			}
-			l.Info()
+			logrusEmitLogEntry(l, defaultLogLevel)
 		}
 		return nil
+	}
+}
+
+func logrusEmitLogEntry(logger logrus.FieldLogger, level logrus.Level) {
+	switch level {
+	case logrus.DebugLevel:
+		logger.Debug()
+	case logrus.InfoLevel:
+		logger.Info()
+	case logrus.WarnLevel:
+		logger.Warning()
+	case logrus.ErrorLevel:
+		logger.Error()
 	}
 }
 
