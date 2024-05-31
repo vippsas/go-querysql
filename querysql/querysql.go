@@ -55,13 +55,10 @@ var _closeHook = func(r io.Closer) error {
 
 func New(ctx context.Context, querier CtxQuerier, qry string, args ...any) *ResultSets {
 	rows, err := querier.QueryContext(ctx, qry, args...)
-	if err != nil {
-		err = fmt.Errorf("rows.New: %w", err)
-	}
 	return &ResultSets{
 		Rows:    rows,
 		started: false,
-		Err:     err,
+		Err:     err, // important to return the error unadorned here, as some code e.g. casts it directly to mssql.Error
 		Logger:  Logger(ctx),
 	}
 }
