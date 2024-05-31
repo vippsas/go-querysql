@@ -289,6 +289,22 @@ func TestEnsureDoneAfterNext(t *testing.T) {
 	assert.Equal(t, ErrNotDone, err)
 }
 
+func TestNoResultSets(t *testing.T) {
+	// when there are 0 result sets in the query, make sure it's ErrNoMoreSets, for consistency
+	qry := `declare @x int = 1`
+	_, err := Slice[int](context.Background(), sqldb, qry)
+	require.NotNil(t, err)
+	require.Equal(t, ErrNoMoreSets, err)
+}
+
+func TestOnlyLoggingResultSets(t *testing.T) {
+	// when there are only logging result sets, make sure error is ErrNoMoreSets
+	qry := `select _=1, x=1;`
+	_, err := Slice[int](context.Background(), sqldb, qry)
+	require.NotNil(t, err)
+	require.Equal(t, ErrNoMoreSets, err)
+}
+
 func TestSingleCloseModeErrorPropagates(t *testing.T) {
 	origCloseHook := _closeHook
 	_closeHook = func(r io.Closer) error {
