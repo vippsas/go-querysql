@@ -23,6 +23,8 @@ var ErrNoMoreSets = fmt.Errorf("no more result sets")
 // for brevity during debugging
 type RowsLogger func(rows *sql.Rows) error
 
+type RowsMonitor func(rows *sql.Rows) error
+
 // ResultSets is a tiny wrapper around sql.Rows to help managing whether to call NextResultSet or not.
 // It is fine to instantiate this struct yourself.
 //
@@ -96,6 +98,9 @@ func (rs *ResultSets) processLogSelect() error {
 	}
 	// a well-written RowsLogger would return rs.Rows.Err(), but just be certain this isn't overlooked...
 	return rs.Rows.Err()
+}
+
+func (rs *ResultSets) hasMonitorColumn(cols []string) bool {
 }
 
 // NextResult reads the next result set from `rs`, into the type/scanner provided in the `typ`
