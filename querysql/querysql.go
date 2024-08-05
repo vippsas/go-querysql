@@ -47,6 +47,8 @@ type ResultSets struct {
 	// It will be compared with the lowercase name of the column.
 	LogKeyLowercase string
 
+	Monitor RowsMonitor
+
 	started bool
 }
 
@@ -62,6 +64,7 @@ func New(ctx context.Context, querier CtxQuerier, qry string, args ...any) *Resu
 		started: false,
 		Err:     err, // important to return the error unadorned here, as some code e.g. casts it directly to mssql.Error
 		Logger:  Logger(ctx),
+		Monitor: Monitor(ctx),
 	}
 }
 
@@ -101,6 +104,19 @@ func (rs *ResultSets) processLogSelect() error {
 }
 
 func (rs *ResultSets) hasMonitorColumn(cols []string) bool {
+	return len(cols) > 0 && cols[0] == "__"
+}
+
+func (rs *ResultSets) processMonitorSelect() error {
+	if rs.Monitor == nil {
+		return fmt.Errorf("missing monitor")
+	}
+
+	if err := rs.Monitor(rs.Rows); err != nil {
+		return err
+	}
+	// a well-written RowsMonitor would return rs.Rows.Err(), but just be certain this isn't overlooked...
+	return rs.Rows.Err()
 }
 
 // NextResult reads the next result set from `rs`, into the type/scanner provided in the `typ`
@@ -124,7 +140,7 @@ func MustNextResult[T any](rs *ResultSets, typ func() Result[T]) T {
 	return result
 }
 
-func (rs *ResultSets) processAllLogSelects() (hadColumns bool, err error) {
+func (rs *ResultSets) processAllSpecialSelects() (hadColumns bool, err error) {
 	for !rs.Done() {
 		var cols []string
 		cols, err = rs.Rows.Columns()
@@ -138,6 +154,14 @@ func (rs *ResultSets) processAllLogSelects() (hadColumns bool, err error) {
 
 		if rs.hasLogColumn(cols) {
 			if err = rs.processLogSelect(); err != nil {
+				return false, err
+			}
+
+			if err = rs.nextResultSet(); err != nil {
+				return false, err
+			}
+		} else if rs.hasMonitorColumn(cols) {
+			if err = rs.processMonitorSelect(); err != nil {
 				return false, err
 			}
 
@@ -186,7 +210,7 @@ func Next(rs *ResultSets, scanner Target) error {
 	}()
 
 	if !rs.started {
-		hadColumns, err := rs.processAllLogSelects()
+		hadColumns, err := rs.processAllSpecialSelects()
 		if err != nil {
 			return err
 		}
@@ -222,7 +246,7 @@ func Next(rs *ResultSets, scanner Target) error {
 		return err
 	}
 
-	if _, err := rs.processAllLogSelects(); err != nil {
+	if _, err := rs.processAllSpecialSelects(); err != nil {
 		return err
 	}
 

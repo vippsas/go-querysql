@@ -108,6 +108,10 @@ select newid()
 -- logging in the end
 select _=1, log='at end'
 
+-- TODO(dsf)
+-- monitor
+select __=1, x = 'hi there';
+
 `
 
 	type row struct {
@@ -119,6 +123,7 @@ select _=1, log='at end'
 	logger := logrus.StandardLogger()
 	logger.Hooks.Add(&hook)
 	ctx := WithLogger(context.Background(), LogrusMSSQLLogger(logger, logrus.InfoLevel))
+	ctx = WithMonitor(ctx, PrometheusMSSQLMonitor())
 	rs := New(ctx, sqldb, qry, "world")
 	rows := rs.Rows
 
@@ -141,6 +146,9 @@ select _=1, log='at end'
 		{"_norows": true, "x": ""},
 		{"log": "at end"},
 	}, hook.lines)
+
+	// TODO(dsf)
+	NextResult(rs, SliceOf[string])
 
 	_, err := NextResult(rs, SingleOf[int])
 	assert.Equal(t, ErrNoMoreSets, err)
