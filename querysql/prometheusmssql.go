@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"reflect"
+	"strconv"
 )
 
 func PrometheusMSSQLMonitor(funcMap map[string]interface{}) RowsMonitor {
@@ -72,7 +73,13 @@ func PrometheusMSSQLMonitor(funcMap map[string]interface{}) RowsMonitor {
 			case []uint8:
 				switch colTypes[i].DatabaseTypeName() {
 				case "DECIMAL":
-					value = convertToFloat(typedValue)
+					str := string(typedValue)
+					value, err = strconv.ParseFloat(str, 64)
+					if err != nil {
+						return fmt.Errorf("could not convert argument '%s' of '%s' to float64",
+							str,
+							colTypes[i].Name())
+					}
 				}
 			}
 
@@ -103,8 +110,4 @@ func PrometheusMSSQLMonitor(funcMap map[string]interface{}) RowsMonitor {
 
 		return nil
 	}
-}
-
-func convertToFloat(v []uint8) float64 {
-	return 0.42 // TODO(dsf)
 }
