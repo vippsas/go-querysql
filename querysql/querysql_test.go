@@ -10,6 +10,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/vippsas/go-querysql/querysql/testhelper"
 )
 
 type MyArray [5]byte
@@ -110,7 +111,7 @@ select _=1, log='at end'
 
 -- TODO(dsf)
 -- monitor
-select __=1, x = 'hi there';
+select __='SetTiming', component = 'abc', val=1, time=1.23;
 
 `
 
@@ -123,7 +124,11 @@ select __=1, x = 'hi there';
 	logger := logrus.StandardLogger()
 	logger.Hooks.Add(&hook)
 	ctx := WithLogger(context.Background(), LogrusMSSQLLogger(logger, logrus.InfoLevel))
-	ctx = WithMonitor(ctx, PrometheusMSSQLMonitor())
+	// TODO(dsf)
+	ctx = WithMonitor(ctx, PrometheusMSSQLMonitor(
+		map[string]interface{}{
+			"SetTiming": testhelper.SetTiming,
+		}))
 	rs := New(ctx, sqldb, qry, "world")
 	rows := rs.Rows
 
