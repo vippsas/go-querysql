@@ -115,7 +115,7 @@ func (rs *ResultSets) processDispatcherSelect() error {
 	if err := rs.Dispatcher(rs.Rows); err != nil {
 		return err
 	}
-	// a well-written RowsGoDispatcher would return rs.Rows.Err(), but just be certain this isn't overlooked...
+	// a well-written dispatchers would return rs.Rows.Err(), but just be certain this isn't overlooked...
 	return rs.Rows.Err()
 }
 

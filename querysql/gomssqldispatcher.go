@@ -29,13 +29,6 @@ func GoMSSQLDispatcher(funcMap map[string]interface{}) RowsGoDispatcher {
 			}
 		}
 
-		/*
-			for i := 0; i < len(cols); i++ {
-				fmt.Printf("%t\n", fields[i])
-			}
-			fmt.Printf("****\n")
-		*/
-
 		// The first argument to the select is expected to be a string
 		// with the name of the function to be called
 		fname, ok := fields[0].(string)
@@ -46,11 +39,6 @@ func GoMSSQLDispatcher(funcMap map[string]interface{}) RowsGoDispatcher {
 		if !ok {
 			return fmt.Errorf("could not find '%s'.  The first argument to 'select' must be the name of a function passed into the dispatcher", fname)
 		}
-
-		/*
-			fmt.Printf("%t\n", f)
-			fmt.Printf("****\n")
-		*/
 
 		funcType := reflect.TypeOf(f)
 		if funcType.Kind() != reflect.Func {

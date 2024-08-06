@@ -110,7 +110,7 @@ select newid()
 select _=1, log='at end'
 
 -- dispatcher
-select __='SetTiming', component = 'abc', val=1, time=1.23;
+select __='TestFunction', component = 'abc', val=1, time=1.23;
 
 `
 
@@ -123,10 +123,9 @@ select __='SetTiming', component = 'abc', val=1, time=1.23;
 	logger := logrus.StandardLogger()
 	logger.Hooks.Add(&hook)
 	ctx := WithLogger(context.Background(), LogrusMSSQLLogger(logger, logrus.InfoLevel))
-	// TODO(dsf)
 	ctx = WithDispatcher(ctx, GoMSSQLDispatcher(
 		map[string]interface{}{
-			"SetTiming": testhelper.SetTiming,
+			"TestFunction": testhelper.TestFunction,
 		}))
 	rs := New(ctx, sqldb, qry, "world")
 	rows := rs.Rows
@@ -151,8 +150,8 @@ select __='SetTiming', component = 'abc', val=1, time=1.23;
 		{"log": "at end"},
 	}, hook.lines)
 
-	// TODO(dsf)
 	NextResult(rs, SliceOf[string])
+	assert.True(t, testhelper.TestFunctionCalled)
 
 	_, err := NextResult(rs, SingleOf[int])
 	assert.Equal(t, ErrNoMoreSets, err)
