@@ -109,8 +109,7 @@ select newid()
 -- logging in the end
 select _=1, log='at end'
 
--- TODO(dsf)
--- monitor
+-- dispatcher
 select __='SetTiming', component = 'abc', val=1, time=1.23;
 
 `
@@ -125,7 +124,7 @@ select __='SetTiming', component = 'abc', val=1, time=1.23;
 	logger.Hooks.Add(&hook)
 	ctx := WithLogger(context.Background(), LogrusMSSQLLogger(logger, logrus.InfoLevel))
 	// TODO(dsf)
-	ctx = WithMonitor(ctx, PrometheusMSSQLMonitor(
+	ctx = WithDispatcher(ctx, GoMSSQLDispatcher(
 		map[string]interface{}{
 			"SetTiming": testhelper.SetTiming,
 		}))

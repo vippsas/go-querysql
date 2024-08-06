@@ -23,7 +23,7 @@ var ErrNoMoreSets = fmt.Errorf("no more result sets")
 // for brevity during debugging
 type RowsLogger func(rows *sql.Rows) error
 
-type RowsMonitor func(rows *sql.Rows) error
+type RowsGoDispatcher func(rows *sql.Rows) error
 
 // ResultSets is a tiny wrapper around sql.Rows to help managing whether to call NextResultSet or not.
 // It is fine to instantiate this struct yourself.
@@ -47,7 +47,7 @@ type ResultSets struct {
 	// It will be compared with the lowercase name of the column.
 	LogKeyLowercase string
 
-	Monitor RowsMonitor
+	Dispatcher RowsGoDispatcher
 
 	started bool
 }
@@ -60,11 +60,11 @@ var _closeHook = func(r io.Closer) error {
 func New(ctx context.Context, querier CtxQuerier, qry string, args ...any) *ResultSets {
 	rows, err := querier.QueryContext(ctx, qry, args...)
 	return &ResultSets{
-		Rows:    rows,
-		started: false,
-		Err:     err, // important to return the error unadorned here, as some code e.g. casts it directly to mssql.Error
-		Logger:  Logger(ctx),
-		Monitor: Monitor(ctx),
+		Rows:       rows,
+		started:    false,
+		Err:        err, // important to return the error unadorned here, as some code e.g. casts it directly to mssql.Error
+		Logger:     Logger(ctx),
+		Dispatcher: Dispatcher(ctx),
 	}
 }
 
@@ -103,19 +103,19 @@ func (rs *ResultSets) processLogSelect() error {
 	return rs.Rows.Err()
 }
 
-func (rs *ResultSets) hasMonitorColumn(cols []string) bool {
+func (rs *ResultSets) hasDispatcherColumn(cols []string) bool {
 	return len(cols) > 0 && cols[0] == "__"
 }
 
-func (rs *ResultSets) processMonitorSelect() error {
-	if rs.Monitor == nil {
-		return fmt.Errorf("missing monitor")
+func (rs *ResultSets) processDispatcherSelect() error {
+	if rs.Dispatcher == nil {
+		return fmt.Errorf("missing dispatcher")
 	}
 
-	if err := rs.Monitor(rs.Rows); err != nil {
+	if err := rs.Dispatcher(rs.Rows); err != nil {
 		return err
 	}
-	// a well-written RowsMonitor would return rs.Rows.Err(), but just be certain this isn't overlooked...
+	// a well-written RowsGoDispatcher would return rs.Rows.Err(), but just be certain this isn't overlooked...
 	return rs.Rows.Err()
 }
 
@@ -160,8 +160,8 @@ func (rs *ResultSets) processAllSpecialSelects() (hadColumns bool, err error) {
 			if err = rs.nextResultSet(); err != nil {
 				return false, err
 			}
-		} else if rs.hasMonitorColumn(cols) {
-			if err = rs.processMonitorSelect(); err != nil {
+		} else if rs.hasDispatcherColumn(cols) {
+			if err = rs.processDispatcherSelect(); err != nil {
 				return false, err
 			}
 

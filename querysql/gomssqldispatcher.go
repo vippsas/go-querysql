@@ -7,7 +7,7 @@ import (
 	"strconv"
 )
 
-func PrometheusMSSQLMonitor(funcMap map[string]interface{}) RowsMonitor {
+func GoMSSQLDispatcher(funcMap map[string]interface{}) RowsGoDispatcher {
 	return func(rows *sql.Rows) error {
 		cols, err := rows.Columns()
 		if err != nil {
@@ -44,7 +44,7 @@ func PrometheusMSSQLMonitor(funcMap map[string]interface{}) RowsMonitor {
 		}
 		f, ok := funcMap[fname]
 		if !ok {
-			return fmt.Errorf("could not find '%s'.  The first argument to 'select' is expected to be the name of a function passed into PrometheusMSSQLMonitor", fname)
+			return fmt.Errorf("could not find '%s'.  The first argument to 'select' must be the name of a function passed into the dispatcher", fname)
 		}
 
 		/*

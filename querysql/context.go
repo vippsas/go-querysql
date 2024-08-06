@@ -7,7 +7,7 @@ import (
 type contextKey int
 
 const ckRowsLogger contextKey = 0
-const ckRowsMonitor contextKey = 1
+const ckRowsDispatcher contextKey = 1
 
 // WithLogger will return the context with a logger registered for use with querysql;
 // during queries, querysql will use Logger() to extract the logger from the context
@@ -23,14 +23,14 @@ func Logger(ctx context.Context) RowsLogger {
 	return nil
 }
 
-func WithMonitor(ctx context.Context, monitor RowsMonitor) context.Context {
-	return context.WithValue(ctx, ckRowsMonitor, monitor)
+func WithDispatcher(ctx context.Context, dispatcher RowsGoDispatcher) context.Context {
+	return context.WithValue(ctx, ckRowsDispatcher, dispatcher)
 }
 
-func Monitor(ctx context.Context) RowsMonitor {
-	l := ctx.Value(ckRowsMonitor)
+func Dispatcher(ctx context.Context) RowsGoDispatcher {
+	l := ctx.Value(ckRowsDispatcher)
 	if l != nil {
-		return l.(RowsMonitor)
+		return l.(RowsGoDispatcher)
 	}
 	return nil
 }
