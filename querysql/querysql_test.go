@@ -123,10 +123,9 @@ select __='TestFunction', component = 'abc', val=1, time=1.23;
 	logger := logrus.StandardLogger()
 	logger.Hooks.Add(&hook)
 	ctx := WithLogger(context.Background(), LogrusMSSQLLogger(logger, logrus.InfoLevel))
-	ctx = WithDispatcher(ctx, GoMSSQLDispatcher(
-		map[string]interface{}{
-			"TestFunction": testhelper.TestFunction,
-		}))
+	ctx = WithDispatcher(ctx, GoMSSQLDispatcher([]interface{}{
+		testhelper.TestFunction,
+	}))
 	rs := New(ctx, sqldb, qry, "world")
 	rows := rs.Rows
 
