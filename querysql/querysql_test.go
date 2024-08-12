@@ -162,6 +162,53 @@ select __='TestFunction', component = 'abc', val=1, time=1.23;
 
 }
 
+func Test_LogAndException(t *testing.T) {
+	qry := `
+-- single scalar
+select 2;
+
+-- single struct
+select X = 1, Y = 'one';
+
+-- log something
+select _=1, x = 'hello world', y = 1;
+
+-- multiple scalar
+select 'hello' union all select @p1;
+
+select x='dsf';
+
+throw 55002, 'Here is an error.', 1;
+`
+
+	type row struct {
+		X int
+		Y string
+	}
+
+	var hook LogHook
+	logger := logrus.StandardLogger()
+	logger.Hooks.Add(&hook)
+	ctx := WithLogger(context.Background(), LogrusMSSQLLogger(logger, logrus.InfoLevel))
+	ctx = WithDispatcher(ctx, GoMSSQLDispatcher([]interface{}{
+		testhelper.TestFunction,
+	}))
+	rs := New(ctx, sqldb, qry, "world")
+	rows := rs.Rows
+
+	assert.Equal(t, 2, MustNextResult(rs, SingleOf[int]))
+	assert.Equal(t, row{1, "one"}, MustNextResult(rs, SingleOf[row]))
+	assert.Equal(t, []string{"hello", "world"}, MustNextResult(rs, SliceOf[string]))
+
+	// Check that we have exhausted the logging select before we do the call that gets ErrNoMoreSets
+	assert.Equal(t, []logrus.Fields{
+		{"x": "hello world", "y": int64(1)},
+	}, hook.lines)
+
+	rs.Close()
+	assert.True(t, isClosed(rows))
+}
+
 func TestMultipleRowsetsPointers(t *testing.T) {
 	qry := `
 -- single scalar

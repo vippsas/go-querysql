@@ -88,14 +88,21 @@ func LogrusMSSQLLogger(logger logrus.FieldLogger, defaultLogLevel logrus.Level) 
 
 func logrusEmitLogEntry(logger logrus.FieldLogger, level logrus.Level) {
 	switch level {
-	case logrus.DebugLevel:
-		logger.Debug()
-	case logrus.InfoLevel:
-		logger.Info()
-	case logrus.WarnLevel:
-		logger.Warning()
+	case logrus.PanicLevel:
+		logger.Panic()
+	case logrus.FatalLevel:
+		logger.Fatal()
 	case logrus.ErrorLevel:
 		logger.Error()
+	case logrus.WarnLevel:
+		logger.Warning()
+	case logrus.InfoLevel:
+		logger.Info()
+	case logrus.DebugLevel:
+	case logrus.TraceLevel:
+		logger.Debug()
+	default:
+		panic(fmt.Sprintf("Log level %d not handled in logrusEmitLogEntry", level))
 	}
 }
 
