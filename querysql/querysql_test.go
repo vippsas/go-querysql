@@ -170,6 +170,56 @@ select _=1, log='at end'
 
 }
 
+func Test_LogAndException(t *testing.T) {
+	qry := `
+-- single scalar
+select 2;
+-- single struct
+select X = 1, Y = 'one';
+-- log something
+select _=1, x = 'hello world', y = 1;
+-- single struct
+select X = 2, Y = 'two';
+throw 55002, 'Here is an error', 1;
+select 2;
+`
+
+	type row struct {
+		X int
+		Y string
+	}
+
+	var hook LogHook
+	logger := logrus.StandardLogger()
+	logger.Hooks.Add(&hook)
+	ctx := WithLogger(context.Background(), LogrusMSSQLLogger(logger, logrus.InfoLevel))
+	rs := New(ctx, sqldb, qry, "world")
+
+	// select 2
+	v1, err := NextResult(rs, SingleOf[int])
+	assert.NoError(t, err)
+	assert.Equal(t, 2, v1)
+
+	// select X = 1, Y = 'one'
+	v2, err := NextResult(rs, SingleOf[row])
+	assert.NoError(t, err)
+	assert.Equal(t, row{1, "one"}, v2)
+
+	// select X = 2, Y = 'two'
+	v3, err := NextResult(rs, SingleOf[row])
+	assert.NoError(t, err)
+	assert.Equal(t, row{2, "two"}, v3)
+
+	// throw 55002, 'Here is an error.', 1;
+	_, err = NextResult(rs, SingleOf[row])
+	assert.Equal(t, "mssql: Here is an error", err.Error())
+
+	// Check that we have exhausted the logging select before we do the call that gets ErrNoMoreSets
+	assert.Equal(t, []logrus.Fields{
+		{"x": "hello world", "y": int64(1)},
+	}, hook.lines)
+}
+
 func TestMultipleRowsetsPointers(t *testing.T) {
 	qry := `
 -- single scalar
