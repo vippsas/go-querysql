@@ -202,16 +202,14 @@ func Next(rs *ResultSets, scanner Target) error {
 	// 2) rs.Rows.NextResultSet() was called, returned true, and there was another result set ready for us
 	// 3) rs.Rows.NextResultSet() was called, returned false, and we have done a close and rs.Rows is nil
 
-	success := false
-	defer func() {
-		if !success {
-			_ = rs.Close()
-		}
-	}()
+	closeRS := func() {
+		_ = rs.Close()
+	}
 
 	if !rs.started {
 		hadColumns, err := rs.processAllSpecialSelects()
 		if err != nil {
+			defer closeRS()
 			return err
 		}
 		if !hadColumns {
@@ -219,6 +217,7 @@ func Next(rs *ResultSets, scanner Target) error {
 			// very similar; but there is a slight difference in whether Columns() is available or not
 			// We make use of this to give a consistent API where you always get ErrNoMoreSets if a `select`
 			// statement is missing
+			defer closeRS()
 			return ErrNoMoreSets
 		}
 		rs.started = true
@@ -226,7 +225,7 @@ func Next(rs *ResultSets, scanner Target) error {
 
 	// Now we are either at end....
 	if rs.Done() {
-		success = true // disable defer-close, already closed
+		// No need to `defer closeRS()`, already closed
 		return ErrNoMoreSets
 	}
 
@@ -234,23 +233,25 @@ func Next(rs *ResultSets, scanner Target) error {
 
 	for rs.Rows.Next() {
 		if err := scanner.ScanRow(rs.Rows); err != nil {
+			defer closeRS()
 			return err
 		}
 	}
 	// important and easily forgotten final check on rows.Err()
 	if err := rs.Rows.Err(); err != nil {
+		defer closeRS()
 		return err
 	}
 
 	if err := rs.nextResultSet(); err != nil {
+		defer closeRS()
 		return err
 	}
 
 	if _, err := rs.processAllSpecialSelects(); err != nil {
+		defer closeRS()
 		return err
 	}
-
-	success = true // disable defer-Close
 
 	if rs.DoneAfterNext {
 		if !rs.Done() {
@@ -258,6 +259,7 @@ func Next(rs *ResultSets, scanner Target) error {
 			return ErrNotDone
 		}
 	}
+	// Don't `defer closeRS()`
 	return nil
 }
 
@@ -460,3 +462,47 @@ func Query4[T1 any, T2 any, T3 any, T4 any](
 	}
 	return t1, t2, t3, t4, nil
 }
+
+type dummy int
+
+func (d dummy) ScanRow(*sql.Rows) error {
+	return nil
+}
+
+func ExecContext(
+	ctx context.Context,
+	querier CtxQuerier,
+	qry string,
+	args ...any,
+) error {
+	rs := New(ctx, querier, qry, args...)
+	var success bool
+	defer func() {
+		if !success {
+			defer rs.Close()
+		}
+	}()
+	// TODO(dsf)
+	err := Next(rs, dummy(1))
+	return err
+}
+
+/*
+func ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+	// TODO(dsf)
+	rs := New(ctx, querier, qry, args...)
+	var success bool
+	defer func() {
+		if !success {
+			defer rs.Close()
+		}
+	}()
+
+	var rs ResultSets
+	if _, err := rs.processAllSpecialSelects(); err != nil {
+		return sql.Result{}, err
+	}
+
+	return sql.Result{}, nil
+}
+*/
