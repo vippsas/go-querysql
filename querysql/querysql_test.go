@@ -129,14 +129,32 @@ select __='TestFunction', component = 'abc', val=1, time=1.23;
 	rs := New(ctx, sqldb, qry, "world")
 	rows := rs.Rows
 
+	// select 2
 	assert.Equal(t, 2, MustNextResult(rs, SingleOf[int]))
+
+	// select X = 1, Y = 'one';
 	assert.Equal(t, row{1, "one"}, MustNextResult(rs, SingleOf[row]))
+
+	// select 'hello' union all select @p1;
 	assert.Equal(t, []string{"hello", "world"}, MustNextResult(rs, SliceOf[string]))
+
+	// select X = 1, Y = 'one' where 1 = 0;
 	assert.Equal(t, []row(nil), MustNextResult(rs, SliceOf[row]))
+
+	// select X = 1, Y = 'one'
+	// union all select X = 2, Y = 'two';
 	assert.Equal(t, []row{{1, "one"}, {2, "two"}}, MustNextResult(rs, SliceOf[row]))
+
+	// select 0x0102030405 union all select 0x0102030406
 	assert.Equal(t, []MyArray{{1, 2, 3, 4, 5}, {1, 2, 3, 4, 6}}, MustNextResult(rs, SliceOf[MyArray]))
+
+	// select concat('hello ', @p1);
 	assert.Equal(t, "hello world", MustNextResult(rs, SingleOf[string]))
+
+	// select 0x0102030405
 	assert.Equal(t, MyArray{1, 2, 3, 4, 5}, MustNextResult(rs, SingleOf[MyArray]))
+
+	// select newid()
 	assert.Equal(t, 16, len(MustNextResult(rs, SingleOf[[]uint8])))
 
 	// Check that we have exhausted the logging select before we do the call that gets ErrNoMoreSets
