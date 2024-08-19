@@ -197,19 +197,15 @@ func Next(rs *ResultSets, scanner Target) error {
 		return rs.Err
 	}
 
-	// When we enter this function one of the following will be the case:
-	// 1) We are at the beginning of using rs.Rows
-	// 2) rs.Rows.NextResultSet() was called, returned true, and there was another result set ready for us
-	// 3) rs.Rows.NextResultSet() was called, returned false, and we have done a close and rs.Rows is nil
-
-	closeRS := func() {
-		_ = rs.Close()
+	if rs.Done() {
+		// No need to `defer closeRS()`, already closed
+		return ErrNoMoreSets
 	}
 
 	if !rs.started {
 		hadColumns, err := rs.processAllSpecialSelects()
 		if err != nil {
-			defer closeRS()
+			defer func() { _ = rs.Close() }()
 			return err
 		}
 		if !hadColumns {
@@ -217,39 +213,38 @@ func Next(rs *ResultSets, scanner Target) error {
 			// very similar; but there is a slight difference in whether Columns() is available or not
 			// We make use of this to give a consistent API where you always get ErrNoMoreSets if a `select`
 			// statement is missing
-			defer closeRS()
+			defer func() { _ = rs.Close() }()
 			return ErrNoMoreSets
 		}
 		rs.started = true
-	}
 
-	// Now we are either at end....
-	if rs.Done() {
-		// No need to `defer closeRS()`, already closed
-		return ErrNoMoreSets
+		if rs.Done() {
+			// No need to `defer closeRS()`, already closed
+			return ErrNoMoreSets
+		}
 	}
-
-	// ...or it's a non-logging select, which we handle:
 
 	for rs.Rows.Next() {
 		if err := scanner.ScanRow(rs.Rows); err != nil {
-			defer closeRS()
+			defer func() { _ = rs.Close() }()
 			return err
 		}
 	}
-	// important and easily forgotten final check on rows.Err()
+
 	if err := rs.Rows.Err(); err != nil {
-		defer closeRS()
-		return err
+		defer func() { _ = rs.Close() }()
+		// If we return the error here, we'll miss processing the result sets up to this point
+		// Instead of returning the error, we set rs.Err so that next call to Next will return the error
+		rs.Err = err
+		return nil
 	}
 
 	if err := rs.nextResultSet(); err != nil {
-		defer closeRS()
+		defer func() { _ = rs.Close() }()
 		return err
 	}
 
 	if _, err := rs.processAllSpecialSelects(); err != nil {
-		defer closeRS()
 		return err
 	}
 
@@ -259,7 +254,7 @@ func Next(rs *ResultSets, scanner Target) error {
 			return ErrNotDone
 		}
 	}
-	// Don't `defer closeRS()`
+
 	return nil
 }
 
