@@ -23,6 +23,22 @@ var ErrNoMoreSets = fmt.Errorf("no more result sets")
 // for brevity during debugging
 type RowsLogger func(rows *sql.Rows) error
 
+type SqlResult struct {
+	// TODO(dsf)
+}
+
+func (r SqlResult) LastInsertId() (int64, error) {
+	panic("Not implemented yet") // TODO(dsf)
+	return 0, nil
+}
+
+func (r SqlResult) RowsAffected() (int64, error) {
+	panic("Not implemented yet") // TODO(dsf)
+	return 0, nil
+}
+
+var _ sql.Result = SqlResult{}
+
 // ResultSets is a tiny wrapper around sql.Rows to help managing whether to call NextResultSet or not.
 // It is fine to instantiate this struct yourself.
 //
@@ -168,21 +184,15 @@ func Next(rs *ResultSets, scanner Target) error {
 		return rs.Err
 	}
 
-	// When we enter this function one of the following will be the case:
-	// 1) We are at the beginning of using rs.Rows
-	// 2) rs.Rows.NextResultSet() was called, returned true, and there was another result set ready for us
-	// 3) rs.Rows.NextResultSet() was called, returned false, and we have done a close and rs.Rows is nil
-
-	success := false
-	defer func() {
-		if !success {
-			_ = rs.Close()
-		}
-	}()
+	if rs.Done() {
+		// No need to `defer closeRS()`, already closed
+		return ErrNoMoreSets
+	}
 
 	if !rs.started {
 		hadColumns, err := rs.processAllLogSelects()
 		if err != nil {
+			defer func() { _ = rs.Close() }()
 			return err
 		}
 		if !hadColumns {
@@ -190,30 +200,37 @@ func Next(rs *ResultSets, scanner Target) error {
 			// very similar; but there is a slight difference in whether Columns() is available or not
 			// We make use of this to give a consistent API where you always get ErrNoMoreSets if a `select`
 			// statement is missing
+			defer func() { _ = rs.Close() }()
 			return ErrNoMoreSets
 		}
 		rs.started = true
-	}
 
-	// Now we are either at end....
-	if rs.Done() {
-		success = true // disable defer-close, already closed
-		return ErrNoMoreSets
+		if rs.Done() {
+			// No need to `defer closeRS()`, already closed
+			return ErrNoMoreSets
+		}
 	}
-
-	// ...or it's a non-logging select, which we handle:
 
 	for rs.Rows.Next() {
+		if scanner == nil {
+			continue
+		}
 		if err := scanner.ScanRow(rs.Rows); err != nil {
+			defer func() { _ = rs.Close() }()
 			return err
 		}
 	}
-	// important and easily forgotten final check on rows.Err()
+
 	if err := rs.Rows.Err(); err != nil {
-		return err
+		defer func() { _ = rs.Close() }()
+		// If we return the error here, we'll miss processing the result sets up to this point
+		// Instead of returning the error, we set rs.Err so that next call to Next will return the error
+		rs.Err = err
+		return nil
 	}
 
 	if err := rs.nextResultSet(); err != nil {
+		defer func() { _ = rs.Close() }()
 		return err
 	}
 
@@ -221,14 +238,13 @@ func Next(rs *ResultSets, scanner Target) error {
 		return err
 	}
 
-	success = true // disable defer-Close
-
 	if rs.DoneAfterNext {
 		if !rs.Done() {
 			_ = rs.Close()
 			return ErrNotDone
 		}
 	}
+
 	return nil
 }
 
@@ -430,4 +446,29 @@ func Query4[T1 any, T2 any, T3 any, T4 any](
 		return zero1, zero2, zero3, zero4, err
 	}
 	return t1, t2, t3, t4, nil
+}
+
+func ExecContext(
+	ctx context.Context,
+	querier CtxQuerier,
+	qry string,
+	args ...any,
+) (sql.Result, error) {
+	rs := New(ctx, querier, qry, args...)
+	res := SqlResult{} // TODO(dsf): How to create a sql.Result?!
+
+	for {
+		err := Next(rs, nil)
+		if err != nil {
+			if err == ErrNoMoreSets {
+				return res, nil
+			}
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func Exec(querier CtxQuerier, qry string, args ...any) (sql.Result, error) {
+	return ExecContext(context.Background(), querier, qry, args...)
 }
