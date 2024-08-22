@@ -33,7 +33,6 @@ func (r SqlResult) LastInsertId() (int64, error) {
 }
 
 func (r SqlResult) RowsAffected() (int64, error) {
-	panic("Not implemented yet") // TODO(dsf)
 	return 0, nil
 }
 
@@ -180,20 +179,27 @@ func (rs *ResultSets) nextResultSet() error {
 // taking care of checking errors and advancing result sets. On errors, `rs`
 // will be closed. If EnsureDoneAfterNext is used, `rs` will also be closed on successful return.
 func Next(rs *ResultSets, scanner Target) error {
+	_, err := NextWithSqlResult(rs, scanner)
+	return err
+}
+
+func NextWithSqlResult(rs *ResultSets, scanner Target) (sql.Result, error) {
+	sqlResult := SqlResult{}
+
 	if rs.Err != nil {
-		return rs.Err
+		return nil, rs.Err
 	}
 
 	if rs.Done() {
 		// No need to `defer closeRS()`, already closed
-		return ErrNoMoreSets
+		return nil, ErrNoMoreSets
 	}
 
 	if !rs.started {
 		hadColumns, err := rs.processAllLogSelects()
 		if err != nil {
 			defer func() { _ = rs.Close() }()
-			return err
+			return nil, err
 		}
 		if !hadColumns {
 			// the *sql.Rows interface typically treats a 'select' with 0 rows and the lack of a select
@@ -201,13 +207,13 @@ func Next(rs *ResultSets, scanner Target) error {
 			// We make use of this to give a consistent API where you always get ErrNoMoreSets if a `select`
 			// statement is missing
 			defer func() { _ = rs.Close() }()
-			return ErrNoMoreSets
+			return sqlResult, ErrNoMoreSets
 		}
 		rs.started = true
 
 		if rs.Done() {
 			// No need to `defer closeRS()`, already closed
-			return ErrNoMoreSets
+			return nil, ErrNoMoreSets
 		}
 	}
 
@@ -217,7 +223,7 @@ func Next(rs *ResultSets, scanner Target) error {
 		}
 		if err := scanner.ScanRow(rs.Rows); err != nil {
 			defer func() { _ = rs.Close() }()
-			return err
+			return nil, err
 		}
 	}
 
@@ -226,26 +232,26 @@ func Next(rs *ResultSets, scanner Target) error {
 		// If we return the error here, we'll miss processing the result sets up to this point
 		// Instead of returning the error, we set rs.Err so that next call to Next will return the error
 		rs.Err = err
-		return nil
+		return sqlResult, nil // TODO(dsf)
 	}
 
 	if err := rs.nextResultSet(); err != nil {
 		defer func() { _ = rs.Close() }()
-		return err
+		return nil, err
 	}
 
 	if _, err := rs.processAllLogSelects(); err != nil {
-		return err
+		return nil, err
 	}
 
 	if rs.DoneAfterNext {
 		if !rs.Done() {
 			_ = rs.Close()
-			return ErrNotDone
+			return nil, ErrNotDone
 		}
 	}
 
-	return nil
+	return sqlResult, nil // TODO(dsf)
 }
 
 func MustNext(rs *ResultSets, scanner Target) {
@@ -455,10 +461,11 @@ func ExecContext(
 	args ...any,
 ) (sql.Result, error) {
 	rs := New(ctx, querier, qry, args...)
-	res := SqlResult{} // TODO(dsf): How to create a sql.Result?!
+	var err error
+	var res sql.Result
 
 	for {
-		err := Next(rs, nil)
+		res, err = NextWithSqlResult(rs, nil)
 		if err != nil {
 			if err == ErrNoMoreSets {
 				return res, nil

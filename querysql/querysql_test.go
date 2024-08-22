@@ -467,39 +467,28 @@ func TestStructScanError(t *testing.T) {
 
 func TestExecContext(t *testing.T) {
 	qry := `
--- single scalar
-select 2;
+if OBJECT_ID('dbo.MyUsers', 'U') is not null drop table MyUsers
+
+create table MyUsers (
+    ID INT IDENTITY(1,1) PRIMARY KEY,
+    Username NVARCHAR(50)
+);
+
+insert into Users (Username) values ('JohnDoe');
 
 -- single struct
-select X = 1, Y = 'one';
-
--- multiple scalar
-select 'hello' union all select @p1;
-
--- empty struct slice
-select X = 1, Y = 'one' where 1 = 0;
-
--- multiple struct
-select X = 1, Y = 'one'
-union all select X = 2, Y = 'two';
-
--- piggy-back a test for logging selects when no logger is configured on the ctx
-select _=1, this='will never be seen'
-union all select _=1, this='also silenced';
-
--- multiple sql.Scanner
-select 0x0102030405 union all select 0x0102030406
-
--- more types of single scalar
-select concat('hello ', @p1);
-select 0x0102030405
-select newid()
-
+--select X = 1, Y = 'one';
 `
 
 	res, err := Exec(sqldb, qry, "world")
 	if err != nil {
-		fmt.Printf("%s", err.Error())
+		fmt.Printf("exec error: %s", err.Error())
+		return
 	}
-	println(res)
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		fmt.Printf("rows affected error: %s", err.Error())
+		return
+	}
+	fmt.Printf("rows affected: %d\n", rowsAffected)
 }
