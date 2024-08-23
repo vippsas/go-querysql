@@ -14,6 +14,18 @@ import (
 var ErrNotDone = fmt.Errorf("there are more result sets after reading last expected result")
 var ErrNoMoreSets = fmt.Errorf("no more result sets")
 
+type NotImplementedSqlResult struct{}
+
+var _ sql.Result = NotImplementedSqlResult{}
+
+func (_ NotImplementedSqlResult) LastInsertId() (int64, error) {
+	return 0, fmt.Errorf("LastInsertId not implemented")
+}
+
+func (_ NotImplementedSqlResult) RowsAffected() (int64, error) {
+	return 0, fmt.Errorf("LastInsertId not implemented")
+}
+
 // RowsLogger takes a sql.Rows and logs it. A default implementation is available, but
 // sometimes one might wish to improve on the formatting of different data types, hence
 // this low level interface is available.
@@ -463,4 +475,29 @@ func Query4[T1 any, T2 any, T3 any, T4 any](
 		return zero1, zero2, zero3, zero4, err
 	}
 	return t1, t2, t3, t4, nil
+}
+
+func ExecContext(
+	ctx context.Context,
+	querier CtxQuerier,
+	qry string,
+	args ...any,
+) (sql.Result, error) {
+	rs := New(ctx, querier, qry, args...)
+	var err error
+
+	for {
+		err = NextNoScanner(rs)
+		if err != nil {
+			if err == ErrNoMoreSets {
+				return NotImplementedSqlResult{}, nil
+			}
+			return nil, err
+		}
+	}
+	return NotImplementedSqlResult{}, nil
+}
+
+func Exec(querier CtxQuerier, qry string, args ...any) (sql.Result, error) {
+	return ExecContext(context.Background(), querier, qry, args...)
 }
