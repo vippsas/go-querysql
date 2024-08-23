@@ -41,6 +41,10 @@ func LogrusMSSQLLogger(logger logrus.FieldLogger, defaultLogLevel logrus.Level) 
 			}
 			parsedLogLevel, err := logrus.ParseLevel(logLevel)
 			if err != nil {
+				logrusEmitLogEntry(logger.WithFields(logrus.Fields{
+					"event":         "invalid.log.level",
+					"invalid.level": logLevel,
+				}), logrus.ErrorLevel)
 				parsedLogLevel = defaultLogLevel
 			}
 
@@ -74,7 +78,7 @@ func LogrusMSSQLLogger(logger logrus.FieldLogger, defaultLogLevel logrus.Level) 
 		if !hadRow {
 			// it can be quite annoying to have logging of empty tables turn into nothing, so log
 			// an indication that the log statement was there, with an empty table
-			// in this case loglevel is unreachable and we really can only log the keys,
+			// in this case loglevel is unreachable, and we really can only log the keys,
 			// but let's hope INFO isn't overboard
 			l := logger.WithField("_norows", true)
 			for _, col := range cols[1:] {
