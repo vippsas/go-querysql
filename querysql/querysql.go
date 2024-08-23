@@ -23,21 +23,6 @@ var ErrNoMoreSets = fmt.Errorf("no more result sets")
 // for brevity during debugging
 type RowsLogger func(rows *sql.Rows) error
 
-type SqlResult struct {
-	// TODO(dsf)
-}
-
-func (r SqlResult) LastInsertId() (int64, error) {
-	panic("Not implemented yet") // TODO(dsf)
-	return 0, nil
-}
-
-func (r SqlResult) RowsAffected() (int64, error) {
-	return 0, nil
-}
-
-var _ sql.Result = SqlResult{}
-
 // ResultSets is a tiny wrapper around sql.Rows to help managing whether to call NextResultSet or not.
 // It is fine to instantiate this struct yourself.
 //
@@ -184,7 +169,7 @@ func Next(rs *ResultSets, scanner Target) error {
 }
 
 func NextWithSqlResult(rs *ResultSets, scanner Target) (sql.Result, error) {
-	sqlResult := SqlResult{}
+	rowsAndResult := RowsAndResult{}
 
 	if rs.Err != nil {
 		return nil, rs.Err
@@ -207,7 +192,7 @@ func NextWithSqlResult(rs *ResultSets, scanner Target) (sql.Result, error) {
 			// We make use of this to give a consistent API where you always get ErrNoMoreSets if a `select`
 			// statement is missing
 			defer func() { _ = rs.Close() }()
-			return sqlResult, ErrNoMoreSets
+			return rowsAndResult, ErrNoMoreSets
 		}
 		rs.started = true
 
@@ -232,7 +217,7 @@ func NextWithSqlResult(rs *ResultSets, scanner Target) (sql.Result, error) {
 		// If we return the error here, we'll miss processing the result sets up to this point
 		// Instead of returning the error, we set rs.Err so that next call to Next will return the error
 		rs.Err = err
-		return sqlResult, nil // TODO(dsf)
+		return rowsAndResult, nil // TODO(dsf)
 	}
 
 	if err := rs.nextResultSet(); err != nil {
@@ -251,7 +236,7 @@ func NextWithSqlResult(rs *ResultSets, scanner Target) (sql.Result, error) {
 		}
 	}
 
-	return sqlResult, nil // TODO(dsf)
+	return rowsAndResult, nil // TODO(dsf)
 }
 
 func MustNext(rs *ResultSets, scanner Target) {
