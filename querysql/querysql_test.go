@@ -125,6 +125,7 @@ select _function='TestFunction', component = 'abc', val=1, time=1.23;
 	ctx = WithDispatcher(ctx, GoMSSQLDispatcher([]interface{}{
 		testhelper.TestFunction,
 	}))
+	testhelper.TestFunctionCalled = false
 	rs := New(ctx, sqldb, qry, "world")
 	rows := rs.Rows
 
@@ -494,4 +495,45 @@ func TestStructScanError(t *testing.T) {
 		select 1 as X, 2 as Y, 3 as Z
 	`)
 	assert.Error(t, err)
+}
+
+func TestExecContext(t *testing.T) {
+	qry := `
+if OBJECT_ID('dbo.MyUsers', 'U') is not null drop table MyUsers
+create table MyUsers (
+    ID INT IDENTITY(1,1) PRIMARY KEY,
+    Username NVARCHAR(50)
+);
+insert into MyUsers (Username) values ('JohnDoe');
+
+-- logging
+select _log='info', Y = 'one';
+
+-- dispatcher
+select _function='TestFunction', component = 'abc', val=1, time=1.23;
+`
+
+	var hook LogHook
+	logger := logrus.StandardLogger()
+	logger.Hooks.Add(&hook)
+	ctx := WithLogger(context.Background(), LogrusMSSQLLogger(logger, logrus.InfoLevel))
+	ctx = WithDispatcher(ctx, GoMSSQLDispatcher([]interface{}{
+		testhelper.TestFunction,
+	}))
+	testhelper.TestFunctionCalled = false
+
+	res, err := ExecContext(ctx, sqldb, qry, "world")
+	assert.NoError(t, err)
+
+	_, err = res.RowsAffected()
+	assert.Error(t, err)
+	_, err = res.LastInsertId()
+	assert.Error(t, err)
+
+	// Check that we have exhausted the logging select before we do the call that gets ErrNoMoreSets
+	assert.Equal(t, []logrus.Fields{
+		{"Y": "one"},
+	}, hook.lines)
+
+	assert.True(t, testhelper.TestFunctionCalled)
 }
