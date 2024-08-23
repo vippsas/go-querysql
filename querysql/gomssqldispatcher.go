@@ -1,0 +1,140 @@
+package querysql
+
+import (
+	"database/sql"
+	"fmt"
+	"reflect"
+	"runtime"
+	"strconv"
+	"strings"
+)
+
+type funcInfo struct {
+	name    string
+	numArgs int
+	argType []reflect.Type
+	valueOf reflect.Value
+}
+
+func GoMSSQLDispatcher(fs []interface{}) RowsGoDispatcher {
+	var knownFuncs string
+	var funcMap = map[string]funcInfo{}
+
+	// Check if the `fs` passed in are indeed functions and construct a map of func name to func
+	for _, f := range fs {
+		var fInfo funcInfo
+
+		funcType := reflect.TypeOf(f)
+		if funcType.Kind() != reflect.Func {
+			panic("Provided type is not a function")
+		}
+
+		fInfo.valueOf = reflect.ValueOf(f)
+		getFunctionName := func(fullName string) string {
+			paths := strings.Split(fullName, "/")
+			lastPath := paths[len(paths)-1]
+			parts := strings.Split(lastPath, ".")
+			return parts[len(parts)-1]
+		}
+		fInfo.name = getFunctionName(runtime.FuncForPC(fInfo.valueOf.Pointer()).Name())
+
+		if knownFuncs == "" {
+			knownFuncs = fInfo.name
+		} else {
+			knownFuncs = fmt.Sprintf("%s, %s", knownFuncs, fInfo.name)
+		}
+
+		typeOfFunc := fInfo.valueOf.Type()
+		fInfo.numArgs = typeOfFunc.NumIn()
+		fInfo.argType = make([]reflect.Type, fInfo.numArgs)
+
+		for i := 0; i < fInfo.numArgs; i++ {
+			fInfo.argType[i] = funcType.In(i)
+		}
+		funcMap[fInfo.name] = fInfo
+	}
+
+	return func(rows *sql.Rows) error {
+		cols, err := rows.Columns()
+		if err != nil {
+			return err
+		}
+		colTypes, err := rows.ColumnTypes()
+		if err != nil {
+			return err
+		}
+
+		fields := make([]interface{}, len(cols))
+		scanPointers := make([]interface{}, len(cols))
+		for i := 0; i < len(cols); i++ {
+			scanPointers[i] = &fields[i]
+		}
+		for rows.Next() {
+			if err = rows.Scan(scanPointers...); err != nil {
+				return err
+			}
+		}
+
+		// The first argument to the select is expected to be a string
+		// with the name of the function to be called
+		fname, ok := fields[0].(string)
+		if !ok {
+			return fmt.Errorf("first argument to 'select' is expected to be a string. Got '%s' of type '%s' instead", fname, reflect.TypeOf(fname).String())
+		}
+		fInfo, ok := funcMap[fname]
+		if !ok {
+			return fmt.Errorf("could not find '%s'.  The first argument to 'select' must be the name of a function passed into the dispatcher.  Expected one of %s", fname, knownFuncs)
+		}
+
+		if len(cols)-1 != fInfo.numArgs {
+			return fmt.Errorf("incorrect number of parameters for function '%s'", fname)
+		}
+
+		// Set up the args for calling fo the function
+		in := make([]reflect.Value, fInfo.numArgs)
+		for i, value := range fields {
+			if i == 0 {
+				continue // function name
+			}
+
+			// Convert MSSQL types to Go types
+			switch typedValue := value.(type) {
+			case []uint8:
+				switch colTypes[i].DatabaseTypeName() {
+				case "DECIMAL":
+					str := string(typedValue)
+					value, err = strconv.ParseFloat(str, 64)
+					if err != nil {
+						return fmt.Errorf("could not convert argument '%s' of '%s' to float64",
+							str,
+							colTypes[i].Name())
+					}
+				}
+			}
+
+			// Check if SQL type and Go func type match
+			reflectedValue := reflect.ValueOf(value)
+			sqlType := reflect.TypeOf(value)
+			fArgType := fInfo.argType[i-1]
+			if fArgType != sqlType {
+				// Try to convert the sql value to the expected type
+				if !reflectedValue.CanConvert(fArgType) {
+					return fmt.Errorf("expected parameter '%s' to be of type '%s' but got '%s' instead\n",
+						colTypes[i].Name(),
+						fArgType,
+						sqlType)
+				}
+				reflectedValue = reflectedValue.Convert(fArgType)
+			}
+			in[i-1] = reflectedValue
+		}
+
+		fInfo.valueOf.Call(in)
+
+		if err = rows.Err(); err != nil {
+			return err
+		}
+
+		return nil
+	}
+}

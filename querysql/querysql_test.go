@@ -10,6 +10,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/vippsas/go-querysql/querysql/testhelper"
 )
 
 type MyArray [5]byte
@@ -76,19 +77,19 @@ select 2;
 select X = 1, Y = 'one';
 
 -- log something
-select _=1, x = 'hello world', y = 1;
+select _log='info', x = 'hello world', y = 1;
 
 -- multiple scalar
 select 'hello' union all select @p1;
 
 -- log something
-select _=1, x = 'hello world2', y = 2;
+select _log='info', x = 'hello world2', y = 2;
 -- log something again without a result in between
-select _=1, x = 'hello world3', y = 3
-union all select _=2, x='hello world3', y= 4
+select _log='info', x = 'hello world3', y = 3
+union all select _log='info', x='hello world3', y= 4
 
 -- logging of 0 rows
-select _=1, x=1 from (select 1 as y where 1 = 0) tmp
+select _log='info', x=1 from (select 1 as y where 1 = 0) tmp
 
 -- empty struct slice
 select X = 1, Y = 'one' where 1 = 0;
@@ -106,8 +107,10 @@ select 0x0102030405
 select newid()
 
 -- logging in the end
-select _=1, log='at end'
+select _log='info', log='at end'
 
+-- dispatcher
+select _function='TestFunction', component = 'abc', val=1, time=1.23;
 `
 
 	type row struct {
@@ -119,6 +122,9 @@ select _=1, log='at end'
 	logger := logrus.StandardLogger()
 	logger.Hooks.Add(&hook)
 	ctx := WithLogger(context.Background(), LogrusMSSQLLogger(logger, logrus.InfoLevel))
+	ctx = WithDispatcher(ctx, GoMSSQLDispatcher([]interface{}{
+		testhelper.TestFunction,
+	}))
 	rs := New(ctx, sqldb, qry, "world")
 	rows := rs.Rows
 
@@ -160,6 +166,9 @@ select _=1, log='at end'
 		{"log": "at end"},
 	}, hook.lines)
 
+	NextResult(rs, SliceOf[string])
+	assert.True(t, testhelper.TestFunctionCalled)
+
 	_, err := NextResult(rs, SingleOf[int])
 	assert.Equal(t, ErrNoMoreSets, err)
 	assert.True(t, isClosed(rows))
@@ -170,6 +179,28 @@ select _=1, log='at end'
 
 }
 
+func TestInvalidLogLevel(t *testing.T) {
+	qry := `
+-- log something
+select _log=1, x = 'hello world', y = 1;
+`
+
+	var hook LogHook
+	logger := logrus.StandardLogger()
+	logger.Hooks.Add(&hook)
+	ctx := WithLogger(context.Background(), LogrusMSSQLLogger(logger, logrus.InfoLevel))
+	rs := New(ctx, sqldb, qry, "world")
+	err := NextNoScanner(rs)
+	assert.Error(t, err)
+	assert.Equal(t, "no more result sets", err.Error())
+
+	// Check that we have exhausted the logging select before we do the call that gets ErrNoMoreSets
+	assert.Equal(t, []logrus.Fields{
+		{"event": "invalid.log.level", "invalid.level": "1"},
+		{"x": "hello world", "y": int64(1)},
+	}, hook.lines)
+}
+
 func Test_LogAndException(t *testing.T) {
 	qry := `
 -- single scalar
@@ -177,7 +208,7 @@ select 2;
 -- single struct
 select X = 1, Y = 'one';
 -- log something
-select _=1, x = 'hello world', y = 1;
+select _log='info', x = 'hello world', y = 1;
 -- single struct
 select X = 2, Y = 'two';
 throw 55002, 'Here is an error', 1;
@@ -239,8 +270,8 @@ select X = 1, Y = 'one'
 union all select X = 2, Y = 'two';
 
 -- piggy-back a test for logging selects when no logger is configured on the ctx
-select _=1, this='will never be seen'
-union all select _=1, this='also silenced';
+select _log='info', this='will never be seen'
+union all select _log='info', this='also silenced';
 
 -- multiple sql.Scanner
 select 0x0102030405 union all select 0x0102030406
@@ -367,7 +398,7 @@ func TestNoResultSets(t *testing.T) {
 
 func TestOnlyLoggingResultSets(t *testing.T) {
 	// when there are only logging result sets, make sure error is ErrNoMoreSets
-	qry := `select _=1, x=1;`
+	qry := `select _log='info', x=1;`
 	_, err := Slice[int](context.Background(), sqldb, qry)
 	require.NotNil(t, err)
 	require.Equal(t, ErrNoMoreSets, err)

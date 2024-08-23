@@ -18,10 +18,12 @@ var ErrNoMoreSets = fmt.Errorf("no more result sets")
 // sometimes one might wish to improve on the formatting of different data types, hence
 // this low level interface is available.
 //
-// The convention is that the first column will always contain the log level. You are
-// encouraged to treat dummy values (such as "1") as a default loglevel such as INFO,
-// for brevity during debugging
+// The convention is that the first column will always contain the log level.
 type RowsLogger func(rows *sql.Rows) error
+
+// RowsGoDispatcher takes a sql.Rows and calls a Go function.  The first argument,
+// __function is the function name, the other arguments are the arguments to the Go function.
+type RowsGoDispatcher func(rows *sql.Rows) error
 
 // ResultSets is a tiny wrapper around sql.Rows to help managing whether to call NextResultSet or not.
 // It is fine to instantiate this struct yourself.
@@ -40,10 +42,15 @@ type ResultSets struct {
 	// By default it is set by New to the value provided by Logger(ctx), but feel free to set or change it.
 	Logger RowsLogger
 
-	// By default, the use of an underscore column, "select _=1, ...", will trigger logging
+	// TODO(dsf): Perhaps remove the LogKeyLowercase.  I'm not 100% this feature is justified
+	// By default, the use of an underscore column, "select _log=info, ...", will trigger logging
 	// This lets you specify a custom key such as "loglevel" for the same purpose in addition.
 	// It will be compared with the lowercase name of the column.
 	LogKeyLowercase string
+
+	// "select _function=MyFunction" will attempt to fall a Go function (in this case MyFunction)
+	// with the remaining arguments to the select as arguments to the function call
+	Dispatcher RowsGoDispatcher
 
 	started bool
 }
@@ -56,10 +63,11 @@ var _closeHook = func(r io.Closer) error {
 func New(ctx context.Context, querier CtxQuerier, qry string, args ...any) *ResultSets {
 	rows, err := querier.QueryContext(ctx, qry, args...)
 	return &ResultSets{
-		Rows:    rows,
-		started: false,
-		Err:     err, // important to return the error unadorned here, as some code e.g. casts it directly to mssql.Error
-		Logger:  Logger(ctx),
+		Rows:       rows,
+		started:    false,
+		Err:        err, // important to return the error unadorned here, as some code e.g. casts it directly to mssql.Error
+		Logger:     Logger(ctx),
+		Dispatcher: Dispatcher(ctx),
 	}
 }
 
@@ -80,7 +88,7 @@ func (rs *ResultSets) Close() error {
 }
 
 func (rs *ResultSets) hasLogColumn(cols []string) bool {
-	return len(cols) > 0 && (cols[0] == "_" || (rs.LogKeyLowercase != "" && strings.ToLower(cols[0]) == rs.LogKeyLowercase))
+	return len(cols) > 0 && cols[0] == "_log" || (rs.LogKeyLowercase != "" && strings.ToLower(cols[0]) == rs.LogKeyLowercase)
 }
 
 func (rs *ResultSets) processLogSelect() error {
@@ -95,6 +103,22 @@ func (rs *ResultSets) processLogSelect() error {
 		return err
 	}
 	// a well-written RowsLogger would return rs.Rows.Err(), but just be certain this isn't overlooked...
+	return rs.Rows.Err()
+}
+
+func (rs *ResultSets) hasDispatcherColumn(cols []string) bool {
+	return len(cols) > 0 && cols[0] == "_function"
+}
+
+func (rs *ResultSets) processDispatcherSelect() error {
+	if rs.Dispatcher == nil {
+		return fmt.Errorf("missing dispatcher")
+	}
+
+	if err := rs.Dispatcher(rs.Rows); err != nil {
+		return err
+	}
+	// a well-written dispatchers would return rs.Rows.Err(), but just be certain this isn't overlooked...
 	return rs.Rows.Err()
 }
 
@@ -119,7 +143,7 @@ func MustNextResult[T any](rs *ResultSets, typ func() Result[T]) T {
 	return result
 }
 
-func (rs *ResultSets) processAllLogSelects() (hadColumns bool, err error) {
+func (rs *ResultSets) processAllSpecialSelects() (hadColumns bool, err error) {
 	for !rs.Done() {
 		var cols []string
 		cols, err = rs.Rows.Columns()
@@ -135,7 +159,13 @@ func (rs *ResultSets) processAllLogSelects() (hadColumns bool, err error) {
 			if err = rs.processLogSelect(); err != nil {
 				return false, err
 			}
-
+			if err = rs.nextResultSet(); err != nil {
+				return false, err
+			}
+		} else if rs.hasDispatcherColumn(cols) {
+			if err = rs.processDispatcherSelect(); err != nil {
+				return false, err
+			}
 			if err = rs.nextResultSet(); err != nil {
 				return false, err
 			}
@@ -160,6 +190,10 @@ func (rs *ResultSets) nextResultSet() error {
 	}
 }
 
+func NextNoScanner(rs *ResultSets) error {
+	return Next(rs, nil)
+}
+
 // Next reads the next result set from `rs`, passing each row to `scanner`;
 // taking care of checking errors and advancing result sets. On errors, `rs`
 // will be closed. If EnsureDoneAfterNext is used, `rs` will also be closed on successful return.
@@ -174,7 +208,7 @@ func Next(rs *ResultSets, scanner Target) error {
 	}
 
 	if !rs.started {
-		hadColumns, err := rs.processAllLogSelects()
+		hadColumns, err := rs.processAllSpecialSelects()
 		if err != nil {
 			defer func() { _ = rs.Close() }()
 			return err
@@ -196,9 +230,11 @@ func Next(rs *ResultSets, scanner Target) error {
 	}
 
 	for rs.Rows.Next() {
-		if err := scanner.ScanRow(rs.Rows); err != nil {
-			defer func() { _ = rs.Close() }()
-			return err
+		if scanner != nil {
+			if err := scanner.ScanRow(rs.Rows); err != nil {
+				defer func() { _ = rs.Close() }()
+				return err
+			}
 		}
 	}
 
@@ -215,7 +251,7 @@ func Next(rs *ResultSets, scanner Target) error {
 		return err
 	}
 
-	if _, err := rs.processAllLogSelects(); err != nil {
+	if _, err := rs.processAllSpecialSelects(); err != nil {
 		return err
 	}
 
