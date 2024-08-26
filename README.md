@@ -91,7 +91,7 @@ singleInteger, sliceOfStruct, err := querysql.Query(
 When writing longer multi-statement SQL queries the lack of
 debugging between statements can be a real problem. A work-around
 is provided in this library. Any target-less `select` statements
-where the name of the first column is `_` will be re-directed
+where the name of the first column is `_log` will be re-directed
 to a logger (if one is configured; and otherwise the data will be
 ignored). Example:
 
@@ -102,12 +102,12 @@ qry := `
     select A='one';
 
     -- logging
-    select _=1, hello=@a;
+    select _log='info', hello=@a;
     
     select B='two';
 
     -- log one entry per row, at a non-standard level
-    select _=1, hello=@a from SomeTable;
+    select _log='info', hello=@a from SomeTable;
 
 ` 
 
@@ -123,8 +123,7 @@ to one combination of tools, and you may need to write your
 own implementation of `RowsLogger` based on the one provided in this library.
 The `*sql.Rows` is passed straight through to the `RowsLogger`,
 but by convention the first column in the result will be the special
-column `_`, which may either contain a log-level (`info`, `debug`, `warning`, `error`)
-or some bogus data (such as `1` above) to use a default log level.
+column `_log`, which may either contain a log-level (`info`, `debug`, `warning`, `error`).
 
 ## Advanced use
 
