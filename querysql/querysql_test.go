@@ -127,6 +127,7 @@ select _function='TestFunction', component = 'abc', val=1, time=1.23;
 	}))
 	rs := New(ctx, sqldb, qry, "world")
 	rows := rs.Rows
+	testhelper.ResetTestFunctionsCalled()
 
 	// select 2
 	assert.Equal(t, 2, MustNextResult(rs, SingleOf[int]))
@@ -167,7 +168,7 @@ select _function='TestFunction', component = 'abc', val=1, time=1.23;
 	}, hook.lines)
 
 	NextResult(rs, SliceOf[string])
-	assert.True(t, testhelper.TestFunctionCalled)
+	assert.True(t, testhelper.TestFunctionsCalled["TestFunction"])
 
 	_, err := NextResult(rs, SingleOf[int])
 	assert.Equal(t, ErrNoMoreSets, err)
@@ -249,6 +250,103 @@ select 2;
 	assert.Equal(t, []logrus.Fields{
 		{"x": "hello world", "y": int64(1)},
 	}, hook.lines)
+}
+
+func TestDispatcherSetupError(t *testing.T) {
+	var mustNotBeTrue bool
+	var hook LogHook
+	logger := logrus.StandardLogger()
+	logger.Hooks.Add(&hook)
+	defer func() {
+		r := recover()
+		assert.NotNil(t, r) // nil if a panic didn't happen, not nil if a panic happened
+		assert.False(t, mustNotBeTrue)
+	}()
+
+	ctx := WithLogger(context.Background(), LogrusMSSQLLogger(logger, logrus.InfoLevel))
+	ctx = WithDispatcher(ctx, GoMSSQLDispatcher([]interface{}{
+		"SomethingThatIsNotAFunctionPointer", // This should cause a panic
+	}))
+	// Nothing here gets executed because we expect the WithDispatcher to have panicked
+	mustNotBeTrue = true
+}
+
+func TestDispatcherRuntimeErrors(t *testing.T) {
+	testcases := []struct {
+		name          string
+		query         string
+		function      string
+		expectedError string
+	}{
+		{
+			name: "Function does not exist",
+			query: `
+			select _function='FunctionDoesNotExist'; -- Blows up here
+			select _function='TestFunction', component = 'abc', val=1, time=1.23; -- This does not get processed
+`,
+			function:      "FunctionDoesNotExist",
+			expectedError: "could not find 'FunctionDoesNotExist'.  The first argument to 'select' must be the name of a function passed into the dispatcher.  Expected one of 'TestFunction', 'OtherTestFunction'",
+		},
+		{
+			name: "_function is not a string",
+			query: `
+			select _function=4; -- Blows up here
+			select _function='TestFunction', component = 'abc', val=1, time=1.23; -- This does not get processed
+`,
+			expectedError: "first argument to 'select' is expected to be a string. Got '4' of type 'int64' instead",
+		},
+		{
+			name: "Function exist, but wrong number of args",
+			query: `
+			select _function='TestFunction', component = 'abc', val=1; -- Blows up here
+			select _function='TestFunction', component = 'abc', val=1, time=1.23; -- This does not get processed
+`,
+			function:      "TestFunction",
+			expectedError: "incorrect number of parameters for function 'TestFunction'",
+		},
+		{
+			name: "Function exist, can't convert args",
+			query: `
+			select _function='TestFunction', component = 'abc', val=1, time='apple'; -- Blows up here
+			select _function='TestFunction', component = 'abc', val=1, time=1.23; -- This does not get processed
+`,
+			function:      "TestFunction",
+			expectedError: "expected parameter 'time' to be of type 'float64' but got 'string' instead",
+		},
+	}
+
+	var hook LogHook
+	logger := logrus.StandardLogger()
+	logger.Hooks.Add(&hook)
+	ctx := WithLogger(context.Background(), LogrusMSSQLLogger(logger, logrus.InfoLevel))
+	ctx = WithDispatcher(ctx, GoMSSQLDispatcher([]interface{}{
+		testhelper.TestFunction,
+		testhelper.OtherTestFunction,
+	}))
+	var err error
+	for _, tc := range testcases {
+		rs := New(ctx, sqldb, tc.query, "world")
+		rows := rs.Rows
+
+		testhelper.ResetTestFunctionsCalled()
+
+		_, err = NextResult(rs, SliceOf[string])
+		if tc.expectedError != "" {
+			assert.Error(t, err)
+			assert.Equal(t, tc.expectedError, err.Error())
+			assert.False(t, testhelper.TestFunctionsCalled[tc.function])
+		} else {
+			assert.False(t, testhelper.TestFunctionsCalled[tc.function])
+		}
+
+		_, err = NextResult(rs, SingleOf[int])
+		assert.Equal(t, ErrNoMoreSets, err)
+		assert.True(t, isClosed(rows))
+		assert.True(t, rs.Done())
+
+		rs.Close()
+		assert.True(t, isClosed(rows))
+	}
 }
 
 func TestMultipleRowsetsPointers(t *testing.T) {

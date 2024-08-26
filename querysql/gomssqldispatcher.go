@@ -39,9 +39,9 @@ func GoMSSQLDispatcher(fs []interface{}) RowsGoDispatcher {
 		fInfo.name = getFunctionName(runtime.FuncForPC(fInfo.valueOf.Pointer()).Name())
 
 		if knownFuncs == "" {
-			knownFuncs = fInfo.name
+			knownFuncs = fmt.Sprintf("'%s'", fInfo.name)
 		} else {
-			knownFuncs = fmt.Sprintf("%s, %s", knownFuncs, fInfo.name)
+			knownFuncs = fmt.Sprintf("%s, '%s'", knownFuncs, fInfo.name)
 		}
 
 		typeOfFunc := fInfo.valueOf.Type()
@@ -79,7 +79,7 @@ func GoMSSQLDispatcher(fs []interface{}) RowsGoDispatcher {
 		// with the name of the function to be called
 		fname, ok := fields[0].(string)
 		if !ok {
-			return fmt.Errorf("first argument to 'select' is expected to be a string. Got '%s' of type '%s' instead", fname, reflect.TypeOf(fname).String())
+			return fmt.Errorf("first argument to 'select' is expected to be a string. Got '%v' of type '%s' instead", fields[0], reflect.TypeOf(fields[0]).String())
 		}
 		fInfo, ok := funcMap[fname]
 		if !ok {
@@ -119,7 +119,7 @@ func GoMSSQLDispatcher(fs []interface{}) RowsGoDispatcher {
 			if fArgType != sqlType {
 				// Try to convert the sql value to the expected type
 				if !reflectedValue.CanConvert(fArgType) {
-					return fmt.Errorf("expected parameter '%s' to be of type '%s' but got '%s' instead\n",
+					return fmt.Errorf("expected parameter '%s' to be of type '%s' but got '%s' instead",
 						colTypes[i].Name(),
 						fArgType,
 						sqlType)
