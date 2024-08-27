@@ -109,6 +109,14 @@ func GoMSSQLDispatcher(fs []interface{}) RowsGoDispatcher {
 							str,
 							colTypes[i].Name())
 					}
+				case "MONEY":
+					str := string(typedValue)
+					value, err = strconv.ParseFloat(str, 64)
+					if err != nil {
+						return fmt.Errorf("could not convert argument '%s' of '%s' to float64",
+							str,
+							colTypes[i].Name())
+					}
 				}
 			}
 

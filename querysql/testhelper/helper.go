@@ -14,7 +14,7 @@ func TestFunction(component string, val int64, t float64) {
 	TestFunctionsCalled[getFunctionName()] = true
 }
 
-func OtherTestFunction() {
+func OtherTestFunction(time float64, money float64) {
 	TestFunctionsCalled[getFunctionName()] = true
 }
 
