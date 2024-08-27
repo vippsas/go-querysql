@@ -111,6 +111,9 @@ select _log='info', log='at end'
 
 -- dispatcher
 select _function='TestFunction', component = 'abc', val=1, time=1.23;
+
+-- dispatcher with MONEY type
+select _function='OtherTestFunction', time=42, money=convert(money, 12345.67);
 `
 
 	type row struct {
@@ -124,6 +127,7 @@ select _function='TestFunction', component = 'abc', val=1, time=1.23;
 	ctx := WithLogger(context.Background(), LogrusMSSQLLogger(logger, logrus.InfoLevel))
 	ctx = WithDispatcher(ctx, GoMSSQLDispatcher([]interface{}{
 		testhelper.TestFunction,
+		testhelper.OtherTestFunction,
 	}))
 	rs := New(ctx, sqldb, qry, "world")
 	rows := rs.Rows
@@ -167,8 +171,9 @@ select _function='TestFunction', component = 'abc', val=1, time=1.23;
 		{"log": "at end"},
 	}, hook.lines)
 
-	NextResult(rs, SliceOf[string])
+	NextResult(rs, SliceOf[string]) // This will process all dispatcher function calls
 	assert.True(t, testhelper.TestFunctionsCalled["TestFunction"])
+	assert.True(t, testhelper.TestFunctionsCalled["OtherTestFunction"])
 
 	_, err := NextResult(rs, SingleOf[int])
 	assert.Equal(t, ErrNoMoreSets, err)
