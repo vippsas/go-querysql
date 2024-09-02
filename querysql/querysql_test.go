@@ -129,7 +129,6 @@ select _function='OtherTestFunction', time=42, money=convert(money, 12345.67);
 		testhelper.TestFunction,
 		testhelper.OtherTestFunction,
 	}))
-	testhelper.TestFunctionCalled = false
 	rs := New(ctx, sqldb, qry, "world")
 	rows := rs.Rows
 	testhelper.ResetTestFunctionsCalled()
@@ -277,47 +276,53 @@ func TestDispatcherSetupError(t *testing.T) {
 	mustNotBeTrue = true
 }
 
-func TestDispatcherRuntimeErrors(t *testing.T) {
+func TestDispatcherRuntimeErrorsAndCornerCases(t *testing.T) {
 	testcases := []struct {
-		name          string
-		query         string
-		function      string
-		expectedError string
+		name                   string
+		query                  string
+		function               string
+		expectedError          string
+		expectedFunctionCalled bool
 	}{
 		{
 			name: "Function does not exist",
 			query: `
-			select _function='FunctionDoesNotExist'; -- Blows up here
-			select _function='TestFunction', component = 'abc', val=1, time=1.23; -- This does not get processed
-`,
+						select _function='FunctionDoesNotExist'; -- Blows up here
+						select _function='TestFunction', component = 'abc', val=1, time=1.23; -- This does not get processed
+			`,
 			function:      "FunctionDoesNotExist",
 			expectedError: "could not find 'FunctionDoesNotExist'.  The first argument to 'select' must be the name of a function passed into the dispatcher.  Expected one of 'TestFunction', 'OtherTestFunction'",
 		},
 		{
 			name: "_function is not a string",
 			query: `
-			select _function=4; -- Blows up here
-			select _function='TestFunction', component = 'abc', val=1, time=1.23; -- This does not get processed
-`,
+						select _function=4; -- Blows up here
+						select _function='TestFunction', component = 'abc', val=1, time=1.23; -- This does not get processed
+			`,
 			expectedError: "first argument to 'select' is expected to be a string. Got '4' of type 'int64' instead",
 		},
 		{
 			name: "Function exist, but wrong number of args",
 			query: `
-			select _function='TestFunction', component = 'abc', val=1; -- Blows up here
-			select _function='TestFunction', component = 'abc', val=1, time=1.23; -- This does not get processed
-`,
+						select _function='TestFunction', component = 'abc', val=1; -- Blows up here
+						select _function='TestFunction', component = 'abc', val=1, time=1.23; -- This does not get processed
+			`,
 			function:      "TestFunction",
 			expectedError: "incorrect number of parameters for function 'TestFunction'",
 		},
 		{
 			name: "Function exist, can't convert args",
 			query: `
-			select _function='TestFunction', component = 'abc', val=1, time='apple'; -- Blows up here
-			select _function='TestFunction', component = 'abc', val=1, time=1.23; -- This does not get processed
-`,
+						select _function='TestFunction', component = 'abc', val=1, time='apple'; -- Blows up here
+						select _function='TestFunction', component = 'abc', val=1, time=1.23; -- This does not get processed
+			`,
 			function:      "TestFunction",
 			expectedError: "expected parameter 'time' to be of type 'float64' but got 'string' instead",
+		},
+		{
+			name:     "Function exists, but try to print nil values",
+			query:    `select _function='TestFunction', component = 'abc', val=1, time='apple' where 1=2; -- will return all nils`,
+			function: "TestFunction",
 		},
 	}
 
@@ -340,10 +345,8 @@ func TestDispatcherRuntimeErrors(t *testing.T) {
 		if tc.expectedError != "" {
 			assert.Error(t, err)
 			assert.Equal(t, tc.expectedError, err.Error())
-			assert.False(t, testhelper.TestFunctionsCalled[tc.function])
-		} else {
-			assert.False(t, testhelper.TestFunctionsCalled[tc.function])
 		}
+		assert.Equal(t, tc.expectedFunctionCalled, testhelper.TestFunctionsCalled[tc.function])
 
 		_, err = NextResult(rs, SingleOf[int])
 		assert.Equal(t, ErrNoMoreSets, err)
@@ -623,7 +626,7 @@ select _function='TestFunction', component = 'abc', val=1, time=1.23;
 	ctx = WithDispatcher(ctx, GoMSSQLDispatcher([]interface{}{
 		testhelper.TestFunction,
 	}))
-	testhelper.TestFunctionCalled = false
+	testhelper.ResetTestFunctionsCalled()
 
 	res, err := ExecContext(ctx, sqldb, qry, "world")
 	assert.NoError(t, err)
@@ -638,5 +641,5 @@ select _function='TestFunction', component = 'abc', val=1, time=1.23;
 		{"Y": "one"},
 	}, hook.lines)
 
-	assert.True(t, testhelper.TestFunctionCalled)
+	assert.True(t, testhelper.TestFunctionsCalled["TestFunction"])
 }
