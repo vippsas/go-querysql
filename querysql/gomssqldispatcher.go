@@ -79,6 +79,11 @@ func GoMSSQLDispatcher(fs []interface{}) RowsGoDispatcher {
 		// with the name of the function to be called
 		fname, ok := fields[0].(string)
 		if !ok {
+			// The first argument is expected to be a string, but we can get nil if we do something like `select _function=... where 1=2`
+			// The lack of results is not an error, and it just means there is nothing to do
+			if fields[0] == nil {
+				return nil
+			}
 			return fmt.Errorf("first argument to 'select' is expected to be a string. Got '%v' of type '%s' instead", fields[0], reflect.TypeOf(fields[0]).String())
 		}
 		fInfo, ok := funcMap[fname]
