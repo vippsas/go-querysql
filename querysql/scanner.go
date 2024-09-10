@@ -5,16 +5,52 @@ import (
 	"fmt"
 )
 
-var ErrZeroRowsExpectedOne = fmt.Errorf("query: 0 rows, expected 1: %w", sql.ErrNoRows)
-var ErrManyRowsExpectedOne = fmt.Errorf("query: more than 1 row (use sliceScanner?)")
+type QuerySqlError struct {
+	fmtString string
+	err       error
+}
+
+func NewManyRowsExpectedOne() QuerySqlError {
+	return QuerySqlError{
+		fmtString: "query: more than 1 row (use sliceScanner?)",
+	}
+}
+
+func NewZeroRowsExpectedOne(underlying error) QuerySqlError {
+	return QuerySqlError{
+		fmtString: "query: 0 rows, expected 1: %w",
+		err:       underlying,
+	}
+}
+
+func (e QuerySqlError) Error() string {
+	return fmt.Sprintf(e.fmtString, e.err)
+}
+
+func (e QuerySqlError) Is(other error) bool {
+	t, ok := other.(*QuerySqlError)
+	if !ok {
+		// Check if the underlying error matches
+		return e.err.Error() == other.Error()
+	}
+	return e.fmtString == t.fmtString && e.err == t.err
+}
+
+func (e QuerySqlError) Unwrap() error {
+	return e.err
+}
+
+var _ error = QuerySqlError{} // Make sure QuerySqlError implements the error interface
 
 type Target interface {
 	ScanRow(*sql.Rows) error
 }
 
+type errorWrapper func(error) error
+
 type Result[T any] interface {
 	Target
-	Result() (T, error)
+	Result() (T, errorWrapper)
 }
 
 type RowScanner[T any] struct {
@@ -80,17 +116,22 @@ func SingleOf[T any]() Result[T] {
 	return singleInto(&value)
 }
 
-func (rv *singleScanner[T]) Result() (T, error) {
+func (rv *singleScanner[T]) Result() (T, errorWrapper) {
 	if !rv.hasRead {
 		var zero T
-		return zero, ErrZeroRowsExpectedOne
+		return zero, func(e error) error {
+			if e == nil {
+				e = sql.ErrNoRows
+			}
+			return NewZeroRowsExpectedOne(e)
+		}
 	}
 	return *rv.target, nil
 }
 
 func (rv *singleScanner[T]) ScanRow(rows *sql.Rows) error {
 	if rv.hasRead {
-		return ErrManyRowsExpectedOne
+		return NewManyRowsExpectedOne()
 	}
 	if err := rv.scanRow(rows); err != nil {
 		return err
@@ -130,7 +171,7 @@ func SliceOf[T any]() Result[[]T] {
 	return sliceInto(&result)
 }
 
-func (rv *sliceScanner[T]) Result() ([]T, error) {
+func (rv *sliceScanner[T]) Result() ([]T, errorWrapper) {
 	return *rv.slicePointer, nil
 }
 
@@ -153,7 +194,7 @@ type iterScanner[T any] struct {
 	visit func(T) error
 }
 
-func (scanner *iterScanner[T]) Result() (int, error) {
+func (scanner *iterScanner[T]) Result() (int, errorWrapper) {
 	return scanner.count, nil
 }
 

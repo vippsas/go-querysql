@@ -3,6 +3,7 @@ package querysql
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"testing"
@@ -447,7 +448,7 @@ func TestEmptyScalar(t *testing.T) {
 	rs := New(context.Background(), sqldb, qry)
 	rows := rs.Rows
 	_, err := NextResult(rs, SingleOf[int])
-	assert.Equal(t, ErrZeroRowsExpectedOne, err)
+	assert.Equal(t, NewZeroRowsExpectedOne(sql.ErrNoRows), err)
 	assert.True(t, isClosed(rows))
 }
 
@@ -461,9 +462,48 @@ func TestEmptyStruct(t *testing.T) {
 	rs := New(context.Background(), sqldb, qry)
 	rows := rs.Rows
 	_, err := NextResult(rs, SingleOf[row])
-	assert.Equal(t, ErrZeroRowsExpectedOne, err)
+	assert.Equal(t, NewZeroRowsExpectedOne(sql.ErrNoRows), err)
 	assert.True(t, isClosed(rows))
 	assert.True(t, rs.Done())
+}
+
+func TestEmptyResultWithError(t *testing.T) {
+	qry := `
+if OBJECT_ID('dbo.MyUsers', 'U') is not null drop table MyUsers
+create table MyUsers (
+    ID INT IDENTITY(1,1) PRIMARY KEY,
+    Username NVARCHAR(50) not null,
+    Userage int
+);
+insert into MyUsers (Userage) 
+output inserted.ID
+values (42);
+`
+	// We run the query above in two ways:
+	// - first with ExecContext
+	// - second with SingleOf
+	// The run with ExecContext returns an error E
+	// The run with SingleOf returns a QuerySqlError wrapped around E
+
+	// ExecContext error
+	_, errExec := ExecContext(context.Background(), sqldb, qry, "world")
+	assert.Error(t, errExec)
+	assert.Equal(t,
+		"mssql: Cannot insert the value NULL into column 'Username', table 'master.dbo.MyUsers'; column does not allow nulls. INSERT fails.",
+		errExec.Error(),
+	)
+
+	// SingleOf error
+	rs := New(context.Background(), sqldb, qry)
+	_ = rs.Rows
+	_, errSingle := NextResult(rs, SingleOf[int])
+	assert.Error(t, errSingle)
+	// The errSingle has the same underlying error as the errExec
+	assert.True(t, errors.Is(errSingle, errExec))
+	// But the errSingle is not the same error as the errExec because,
+	// in addition to the underlying error, errSingle also contains
+	// the information that we called Single and didn't get any value back
+	assert.False(t, errors.Is(errExec, errSingle))
 }
 
 func TestManyScalar(t *testing.T) {
@@ -472,7 +512,7 @@ func TestManyScalar(t *testing.T) {
 	rows := rs.Rows
 
 	_, err := NextResult(rs, SingleOf[int])
-	assert.Equal(t, ErrManyRowsExpectedOne, err)
+	assert.Equal(t, NewManyRowsExpectedOne(), err)
 	assert.True(t, isClosed(rows))
 	assert.True(t, rs.Done())
 }

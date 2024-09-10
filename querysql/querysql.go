@@ -139,12 +139,21 @@ func (rs *ResultSets) processDispatcherSelect() error {
 // `Call[MyStruct](func(MyStruct) error { ... })`
 func NextResult[T any](rs *ResultSets, typ func() Result[T]) (T, error) {
 	result := typ()
+	var zero T
 	if err := Next(rs, result); err != nil {
-		var zero T
 		return zero, err
 	}
 
-	return result.Result()
+	// The Next() above can return nil but still set rs.Err
+	// If that's the case, Result() will return empty results for
+	// iterScanner and sliceScanner and no errors.
+	// When it comes to singleScanner, it returns
+	// the ErrZeroRowsExpectedOne wrapped around the underlying error (rs.Err)
+	v, errFunc := result.Result()
+	if errFunc != nil {
+		return zero, errFunc(rs.Err)
+	}
+	return v, nil
 }
 
 func MustNextResult[T any](rs *ResultSets, typ func() Result[T]) T {
