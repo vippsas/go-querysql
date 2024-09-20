@@ -468,7 +468,18 @@ func TestEmptyStruct(t *testing.T) {
 }
 
 func TestEmptyResultWithError(t *testing.T) {
-	qry := `
+	// We run the queries in two ways:
+	// - first with ExecContext
+	// - second with SingleOf
+	// The run with ExecContext returns an error E
+	// The run with SingleOf returns a QuerySqlError wrapped around E
+	testcases := []struct {
+		name     string
+		query    string
+		expected string
+	}{
+		{
+			query: `
 if OBJECT_ID('dbo.MyUsers', 'U') is not null drop table MyUsers
 create table MyUsers (
     ID INT IDENTITY(1,1) PRIMARY KEY,
@@ -478,32 +489,29 @@ create table MyUsers (
 insert into MyUsers (Userage) 
 output inserted.ID
 values (42);
-`
-	// We run the query above in two ways:
-	// - first with ExecContext
-	// - second with SingleOf
-	// The run with ExecContext returns an error E
-	// The run with SingleOf returns a QuerySqlError wrapped around E
+`,
+			expected: "mssql: Cannot insert the value NULL into column 'Username', table 'master.dbo.MyUsers'; column does not allow nulls. INSERT fails.",
+		},
+	}
 
-	// ExecContext error
-	_, errExec := ExecContext(context.Background(), sqldb, qry, "world")
-	assert.Error(t, errExec)
-	assert.Equal(t,
-		"mssql: Cannot insert the value NULL into column 'Username', table 'master.dbo.MyUsers'; column does not allow nulls. INSERT fails.",
-		errExec.Error(),
-	)
+	for _, tc := range testcases {
+		// ExecContext error
+		_, errExec := ExecContext(context.Background(), sqldb, tc.query, "world")
+		assert.Error(t, errExec)
+		assert.Equal(t, tc.expected, errExec.Error())
 
-	// SingleOf error
-	rs := New(context.Background(), sqldb, qry)
-	_ = rs.Rows
-	_, errSingle := NextResult(rs, SingleOf[int])
-	assert.Error(t, errSingle)
-	// The errSingle has the same underlying error as the errExec
-	assert.True(t, errors.Is(errSingle, errExec))
-	// But the errSingle is not the same error as the errExec because,
-	// in addition to the underlying error, errSingle also contains
-	// the information that we called Single and didn't get any value back
-	assert.False(t, errors.Is(errExec, errSingle))
+		// SingleOf error
+		rs := New(context.Background(), sqldb, tc.query)
+		_ = rs.Rows
+		_, errSingle := NextResult(rs, SingleOf[int])
+		assert.Error(t, errSingle)
+		// The errSingle has the same underlying error as the errExec
+		assert.True(t, errors.Is(errSingle, errExec))
+		// But the errSingle is not the same error as the errExec because,
+		// in addition to the underlying error, errSingle also contains
+		// the information that we called Single and didn't get any value back
+		assert.False(t, errors.Is(errExec, errSingle))
+	}
 }
 
 func TestManyScalar(t *testing.T) {
