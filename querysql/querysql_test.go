@@ -480,37 +480,62 @@ func TestEmptyResultWithError(t *testing.T) {
 	}{
 		{
 			query: `
-if OBJECT_ID('dbo.MyUsers', 'U') is not null drop table MyUsers
-create table MyUsers (
+if OBJECT_ID('dbo.MyUser', 'U') is not null drop table MyUser
+create table MyUser (
     ID INT IDENTITY(1,1) PRIMARY KEY,
     Username NVARCHAR(50) not null,
     Userage int
 );
-insert into MyUsers (Userage) 
+insert into MyUser (Userage) 
 output inserted.ID
 values (42);
 `,
-			expected: "mssql: Cannot insert the value NULL into column 'Username', table 'master.dbo.MyUsers'; column does not allow nulls. INSERT fails.",
+			expected: "mssql: Cannot insert the value NULL into column 'Username', table 'master.dbo.MyUser'; column does not allow nulls. INSERT fails.",
+		},
+		{
+			query: `
+			if OBJECT_ID('dbo.Employee', 'U') is not null drop table Employee
+			if OBJECT_ID('dbo.Department', 'U') is not null drop table Department
+			create table Department (
+			    ID INT IDENTITY(1,1) PRIMARY KEY,
+			    Name NVARCHAR(50) not null,
+			);
+			create table Employee (
+			    ID INT IDENTITY(1,1) PRIMARY KEY,
+			    Name NVARCHAR(50) not null,
+			    Department int
+			    constraint fk_Department foreign key references Department(ID),
+			);
+
+			insert into Employee(Name, Department) values ('Bob', 1);
+			select @@rowcount;
+			`,
+			expected: "mssql: The INSERT statement conflicted with the FOREIGN KEY constraint \"fk_Department\". The conflict occurred in database \"master\", table \"dbo.Department\", column 'ID'.",
+			// TODO(dsf)
 		},
 	}
 
-	for _, tc := range testcases {
-		// ExecContext error
-		_, errExec := ExecContext(context.Background(), sqldb, tc.query, "world")
-		assert.Error(t, errExec)
-		assert.Equal(t, tc.expected, errExec.Error())
+	for i, tc := range testcases {
+		t.Run(fmt.Sprintf("%d:%s", i, tc.name), func(t *testing.T) {
+			// ExecContext error
+			_, errExec := ExecContext(context.Background(), sqldb, tc.query, "world")
+			require.Error(t, errExec)
+			require.Equal(t, tc.expected, errExec.Error())
 
-		// SingleOf error
-		rs := New(context.Background(), sqldb, tc.query)
-		_ = rs.Rows
-		_, errSingle := NextResult(rs, SingleOf[int])
-		assert.Error(t, errSingle)
-		// The errSingle has the same underlying error as the errExec
-		assert.True(t, errors.Is(errSingle, errExec))
-		// But the errSingle is not the same error as the errExec because,
-		// in addition to the underlying error, errSingle also contains
-		// the information that we called Single and didn't get any value back
-		assert.False(t, errors.Is(errExec, errSingle))
+			// SingleOf error
+			rs := New(context.Background(), sqldb, tc.query)
+			_ = rs.Rows
+			_, errSingle := NextResult(rs.EnsureDoneAfterNext(), SingleOf[int])
+			require.Error(t, errSingle)
+
+			fmt.Printf("single(%s)\n  exec(%s)", errSingle.Error(), errExec.Error())
+			// The errSingle has the same underlying error as the errExec
+			require.True(t, errors.Is(errSingle, errExec), fmt.Sprintf("single(%s) exec(%s)", errSingle.Error(), errExec.Error()))
+			// But the errSingle is not the same error as the errExec because,
+			// in addition to the underlying error, errSingle also contains
+			// the information that we called Single and didn't get any value back
+			require.False(t, errors.Is(errExec, errSingle))
+		})
 	}
 }
 
@@ -653,12 +678,12 @@ func TestStructScanError(t *testing.T) {
 
 func TestExecContext(t *testing.T) {
 	qry := `
-if OBJECT_ID('dbo.MyUsers', 'U') is not null drop table MyUsers
-create table MyUsers (
+if OBJECT_ID('dbo.MyUser', 'U') is not null drop table MyUser
+create table MyUser (
     ID INT IDENTITY(1,1) PRIMARY KEY,
     Username NVARCHAR(50)
 );
-insert into MyUsers (Username) values ('JohnDoe');
+insert into MyUser (Username) values ('JohnDoe');
 
 -- logging
 select _log='info', Y = 'one';
