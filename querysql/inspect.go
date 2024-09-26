@@ -3,11 +3,14 @@ package querysql
 import (
 	"database/sql"
 	"reflect"
+	"time"
 )
 
 type typeinfo struct {
-	valid    bool
-	isStruct bool // use special struct demarshalling; otherwise standard SQL Scan
+	valid          bool
+	isStruct       bool // use special struct demarshalling; otherwise standard SQL Scan
+	implementsScan bool
+	isTimeDotTime  bool
 }
 
 var sqlScannerType = reflect.TypeOf((*sql.Scanner)(nil)).Elem()
@@ -16,6 +19,21 @@ func inspectType[T any]() typeinfo {
 	var zeroValue T
 	typ := reflect.TypeOf(zeroValue)
 	kind := typ.Kind()
+
+	switch any(zeroValue).(type) {
+	case sql.Scanner:
+		// Check if type implements the Scanner interface
+		return typeinfo{
+			valid:          true,
+			implementsScan: true,
+		}
+	case time.Time:
+		// underlying sql package automatically converts DATETIME or TIMESTAMP to time.Time
+		return typeinfo{
+			valid:         true,
+			isTimeDotTime: true,
+		}
+	}
 
 	if kind == reflect.Struct {
 		return typeinfo{

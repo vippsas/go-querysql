@@ -64,11 +64,11 @@ type RowScanner[T any] struct {
 func (scanner *RowScanner[T]) scanRow(rows *sql.Rows) error {
 	if !scanner.init {
 		scanner.init = true
+
 		scanner.typeinfo = inspectType[T]()
 		if !scanner.typeinfo.valid {
 			return fmt.Errorf("query.ScanRow: illegal type parameter T")
 		}
-
 		if scanner.isStruct {
 			var err error
 			scanner.scanPointers, err = getPointersToFields(rows, scanner.target)

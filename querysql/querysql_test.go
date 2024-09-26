@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"testing"
+	"time"
 
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -35,15 +36,15 @@ func TestInspectType(t *testing.T) {
 		expected, got typeinfo
 	}{
 		{
-			expected: typeinfo{true, false},
+			expected: typeinfo{true, false, false, false},
 			got:      inspectType[int](),
 		},
 		{
-			expected: typeinfo{true, false},
+			expected: typeinfo{true, false, false, false},
 			got:      inspectType[[]byte](),
 		},
 		{
-			expected: typeinfo{true, true},
+			expected: typeinfo{true, true, false, false},
 			got:      inspectType[mystruct](),
 		},
 		{
@@ -51,7 +52,7 @@ func TestInspectType(t *testing.T) {
 			got:      inspectType[[]mystruct](),
 		},
 		{
-			expected: typeinfo{true, false},
+			expected: typeinfo{true, false, false, false},
 			got:      inspectType[MyArray](),
 		},
 		{
@@ -682,4 +683,50 @@ select _function='TestFunction', component = 'abc', val=1, time=1.23;
 	}, hook.lines)
 
 	assert.True(t, testhelper.TestFunctionsCalled["TestFunction"])
+}
+
+func Test_timeDotTime(t *testing.T) {
+	testcases := []struct {
+		name     string
+		qry      string
+		expected string
+		err      error
+	}{
+		{
+			name: "Scan into time.Time",
+			qry:  `select sysutcdatetime();`,
+		},
+	}
+	ctx := context.Background()
+	for _, tc := range testcases {
+		res, err := Single[time.Time](ctx, sqldb, tc.qry, "world")
+		if err == nil {
+			assert.NoError(t, err)
+		} else {
+			assert.Error(t, err)
+		}
+		if tc.expected != "" {
+			assert.Equal(t, tc.expected, res)
+		}
+	}
+}
+
+type MyType struct {
+	a int
+	b string
+}
+
+func (m MyType) Scan(src any) error {
+	return nil
+}
+
+var _ sql.Scanner = MyType{}
+
+func Test_TypeThatImplementsScan(t *testing.T) {
+	qry := `select 1`
+	ctx := context.Background()
+	// If MyType doesn't implement Scan, then querysql will try to put the result of the `select 1`
+	// into the `MyType struct{int, string}` and querysql will blow up with the error `failed to map all struct fields to query columns`
+	_, err := Single[MyType](ctx, sqldb, qry, "world")
+	assert.NoError(t, err)
 }
