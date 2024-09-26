@@ -693,7 +693,7 @@ func Test_timeDotTime(t *testing.T) {
 		err      error
 	}{
 		{
-			name: "sysutc",
+			name: "Scan into time.Time",
 			qry:  `select sysutcdatetime();`,
 		},
 	}
@@ -709,4 +709,24 @@ func Test_timeDotTime(t *testing.T) {
 			assert.Equal(t, tc.expected, res)
 		}
 	}
+}
+
+type MyType struct {
+	a int
+	b string
+}
+
+func (m MyType) Scan(src any) error {
+	return nil
+}
+
+var _ sql.Scanner = MyType{}
+
+func Test_TypeThatImplementsScan(t *testing.T) {
+	qry := `select 1`
+	ctx := context.Background()
+	// If MyType doesn't implement Scan, then querysql will try to put the result of the `select 1`
+	// into the `MyType struct{int, string}` and querysql will blow up with the error `failed to map all struct fields to query columns`
+	_, err := Single[MyType](ctx, sqldb, qry, "world")
+	assert.NoError(t, err)
 }
