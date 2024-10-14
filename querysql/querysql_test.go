@@ -730,3 +730,24 @@ func Test_TypeThatImplementsScan(t *testing.T) {
 	_, err := Single[MyType](ctx, sqldb, qry, "world")
 	assert.NoError(t, err)
 }
+
+func Test_SingleOrNil(t *testing.T) {
+	// No easy way to do this as a table driven test because
+	// we are calling funcs (Single and SingleOrNil) with different signatures
+	ctx := context.Background()
+
+	// query returns no result set; gives error when queried with Single
+	_, err := Single[int](ctx, sqldb, `select 1 where 0 = 1;`, "world")
+	require.Error(t, err)
+	require.True(t, errors.Is(err, sql.ErrNoRows))
+
+	// query returns no result set; gives no error when queried with SingleOrNil
+	vptr, err := SingleOrNil[int](ctx, sqldb, `select 1 where 0 = 1;`, "world")
+	require.NoError(t, err)
+	require.Nil(t, vptr)
+
+	// query returns an error; gives error when queried with SingleOrNil
+	vptr, err = SingleOrNil[int](ctx, sqldb, `throw 55002, 'Here is an error', 1;`, "world")
+	require.Error(t, err)
+	require.False(t, errors.Is(err, sql.ErrNoRows))
+}
