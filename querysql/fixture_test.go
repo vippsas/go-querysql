@@ -1,4 +1,4 @@
-package querysql
+package querysql_test
 
 import (
 	"database/sql"
