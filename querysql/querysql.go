@@ -6,6 +6,7 @@ package querysql
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -310,6 +311,14 @@ func Single[T any](ctx context.Context, querier CtxQuerier, qry string, args ...
 
 func MustSingle[T any](ctx context.Context, querier CtxQuerier, qry string, args ...any) T {
 	return must(Single[T](ctx, querier, qry, args...))
+}
+
+func SingleOrNil[T any](ctx context.Context, querier CtxQuerier, qry string, args ...any) (*T, error) {
+	v, err := Single[T](ctx, querier, qry, args...)
+	if err != nil && errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return &v, err
 }
 
 func Slice[T any](ctx context.Context, querier CtxQuerier, qry string, args ...any) ([]T, error) {
