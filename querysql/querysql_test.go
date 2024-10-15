@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/vippsas/go-querysql/querysql"
 	"github.com/vippsas/go-querysql/querysql/testhelper"
+	"github.com/vippsas/golib/money"
 )
 
 type MyArray [5]byte
@@ -683,4 +684,28 @@ func Test_SingleOrNil(t *testing.T) {
 	vptr, err = querysql.SingleOrNil[int](ctx, sqldb, `throw 55002, 'Here is an error', 1;`, "world")
 	require.Error(t, err)
 	require.False(t, errors.Is(err, sql.ErrNoRows))
+}
+
+func Test_Money(t *testing.T) {
+	ctx := context.Background()
+	qry := `
+if OBJECT_ID('dbo.MyMoney', 'U') is not null drop table MyMoney
+create table MyMoney(
+    ID INT IDENTITY(1,1) PRIMARY KEY,
+    Amount money not null,
+);
+insert into MyMoney(Amount) 
+values (42.00);
+`
+
+	// ExecContext error
+	_, err := querysql.ExecContext(ctx, sqldb, qry, "world")
+	assert.NoError(t, err)
+
+	_, err = querysql.Single[*money.Money](ctx, sqldb, `select top(1) Amount from MyMoney`)
+	assert.Error(t, err)
+
+	m, err := querysql.Single[money.Money](ctx, sqldb, `select top(1) Amount from MyMoney`)
+	assert.NoError(t, err)
+	assert.Equal(t, "42.00", m.String())
 }

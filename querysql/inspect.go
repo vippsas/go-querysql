@@ -21,17 +21,21 @@ func inspectType[T any]() typeinfo {
 	kind := typ.Kind()
 
 	switch any(zeroValue).(type) {
-	case sql.Scanner:
-		// Check if type implements the Scanner interface
-		return typeinfo{
-			valid:          true,
-			implementsScan: true,
-		}
 	case time.Time:
 		// underlying sql package automatically converts DATETIME or TIMESTAMP to time.Time
 		return typeinfo{
 			valid:         true,
 			isTimeDotTime: true,
+		}
+	}
+
+	switch any(&zeroValue).(type) {
+	case sql.Scanner:
+		// Check if type implements the Scanner interface. This check needs to happen against the pointer to the type
+		// instead of the type itself.  That's because the Scanner interface is implemented with a pointer receiver
+		return typeinfo{
+			valid:          true,
+			implementsScan: true,
 		}
 	}
 

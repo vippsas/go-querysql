@@ -39,7 +39,7 @@ func TestInspectType(t *testing.T) {
 			got:      inspectType[[]mystruct](),
 		},
 		{
-			expected: typeinfo{true, false, false, false},
+			expected: typeinfo{true, false, true, false},
 			got:      inspectType[myArray](),
 		},
 		{
