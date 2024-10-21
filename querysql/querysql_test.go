@@ -407,7 +407,10 @@ func TestEmptyScalar(t *testing.T) {
 	rs := querysql.New(context.Background(), sqldb, qry)
 	rows := rs.Rows
 	_, err := querysql.NextResult(rs, querysql.SingleOf[int])
-	assert.Equal(t, querysql.NewZeroRowsExpectedOne(sql.ErrNoRows), err)
+	assert.Error(t, err)
+	assert.True(t, errors.Is(err, querysql.ZeroRowsExpectedOne))
+	assert.False(t, errors.Is(querysql.ZeroRowsExpectedOne, err))
+	assert.NotEqual(t, querysql.ZeroRowsExpectedOne, err)
 	assert.True(t, isClosed(rows))
 }
 
@@ -421,7 +424,10 @@ func TestEmptyStruct(t *testing.T) {
 	rs := querysql.New(context.Background(), sqldb, qry)
 	rows := rs.Rows
 	_, err := querysql.NextResult(rs, querysql.SingleOf[row])
-	assert.Equal(t, querysql.NewZeroRowsExpectedOne(sql.ErrNoRows), err)
+	assert.Error(t, err)
+	assert.True(t, errors.Is(err, querysql.ZeroRowsExpectedOne))
+	assert.False(t, errors.Is(querysql.ZeroRowsExpectedOne, err))
+	assert.NotEqual(t, querysql.ZeroRowsExpectedOne, err)
 	assert.True(t, isClosed(rows))
 	assert.True(t, rs.Done())
 }
@@ -471,7 +477,7 @@ func TestManyScalar(t *testing.T) {
 	rows := rs.Rows
 
 	_, err := querysql.NextResult(rs, querysql.SingleOf[int])
-	assert.Equal(t, querysql.NewManyRowsExpectedOne(), err)
+	assert.Equal(t, querysql.ManyRowsExpectedOne, err)
 	assert.True(t, isClosed(rows))
 	assert.True(t, rs.Done())
 }

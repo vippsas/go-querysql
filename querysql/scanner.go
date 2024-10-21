@@ -6,38 +6,56 @@ import (
 )
 
 type QuerySqlError struct {
-	fmtString string
-	err       error
+	fmtString     string
+	underlyingErr error
 }
 
-func NewManyRowsExpectedOne() QuerySqlError {
-	return QuerySqlError{
-		fmtString: "query: more than 1 row (use sliceScanner?)",
-	}
+var ManyRowsExpectedOne = QuerySqlError{
+	fmtString: "query: more than 1 row (use sliceScanner?)",
 }
 
-func NewZeroRowsExpectedOne(underlying error) QuerySqlError {
-	return QuerySqlError{
-		fmtString: "query: 0 rows, expected 1: %w",
-		err:       underlying,
-	}
+var ZeroRowsExpectedOne = QuerySqlError{
+	fmtString: "query: 0 rows, expected 1: %w",
 }
 
 func (e QuerySqlError) Error() string {
-	return fmt.Sprintf(e.fmtString, e.err)
+	return fmt.Sprintf(e.fmtString, e.underlyingErr)
 }
 
 func (e QuerySqlError) Is(other error) bool {
-	t, ok := other.(*QuerySqlError)
+	t, ok := other.(QuerySqlError)
 	if !ok {
 		// Check if the underlying error matches
-		return e.err.Error() == other.Error()
+		if e.underlyingErr == nil {
+			return false
+		}
+		return e.underlyingErr.Error() == other.Error()
 	}
-	return e.fmtString == t.fmtString && e.err == t.err
+
+	if e.fmtString != t.fmtString {
+		return false
+	}
+
+	// At this point `e` and `other` are ZeroRowsExpectedOne errors
+	//
+	// Note that querysql.ZeroRowsExpectedOne is a var with underlyingErr to nul
+	// This var captures a generic ZeroRowsExpectedOne
+	// In reality, all such errors will have a non-null underlyingErr.
+	//
+	// We want any QuerySqlError with `fmtString="query: 0 rows, expected 1: %w"`
+	// to be considered a querysql.ZeroRowsExpectedOne.  In other word:
+	//
+	// true:  err.Is(specificZeroRowsExpectedOne, querysql.ZeroRowsExpectedOne)
+	//
+	// However, querysql.ZeroRowsExpectedOne is generic (meaning that it doesn't
+	// have an underlyingErr set).  So we expect:
+	//
+	// false: err.Is(querysql.ZeroRowsExpectedOne, specificZeroRowsExpectedOne)
+	return t.underlyingErr == nil || e.underlyingErr == t.underlyingErr
 }
 
 func (e QuerySqlError) Unwrap() error {
-	return e.err
+	return e.underlyingErr
 }
 
 var _ error = QuerySqlError{} // Make sure QuerySqlError implements the error interface
@@ -123,7 +141,10 @@ func (rv *singleScanner[T]) Result() (T, errorWrapper) {
 			if e == nil {
 				e = sql.ErrNoRows
 			}
-			return NewZeroRowsExpectedOne(e)
+			return QuerySqlError{
+				fmtString:     "query: 0 rows, expected 1: %w",
+				underlyingErr: e,
+			}
 		}
 	}
 	return *rv.target, nil
@@ -131,7 +152,7 @@ func (rv *singleScanner[T]) Result() (T, errorWrapper) {
 
 func (rv *singleScanner[T]) ScanRow(rows *sql.Rows) error {
 	if rv.hasRead {
-		return NewManyRowsExpectedOne()
+		return ManyRowsExpectedOne
 	}
 	if err := rv.scanRow(rows); err != nil {
 		return err
