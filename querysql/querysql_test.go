@@ -12,7 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/vippsas/go-querysql/querysql"
 	"github.com/vippsas/go-querysql/querysql/testhelper"
-	"github.com/vippsas/golib/money"
 )
 
 type MyArray [5]byte
@@ -708,10 +707,10 @@ values (42.00);
 	_, err := querysql.ExecContext(ctx, sqldb, qry, "world")
 	assert.NoError(t, err)
 
-	_, err = querysql.Single[*money.Money](ctx, sqldb, `select top(1) Amount from MyMoney`)
+	_, err = querysql.Single[*testhelper.Money](ctx, sqldb, `select top(1) Amount from MyMoney`)
 	assert.Error(t, err)
 
-	m, err := querysql.Single[money.Money](ctx, sqldb, `select top(1) Amount from MyMoney`)
+	m, err := querysql.Single[testhelper.Money](ctx, sqldb, `select top(1) Amount from MyMoney`)
 	assert.NoError(t, err)
 	assert.Equal(t, "42.00", m.String())
 }
