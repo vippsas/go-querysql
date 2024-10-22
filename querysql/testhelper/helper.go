@@ -1,14 +1,13 @@
 package testhelper
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"math/bits"
 	"runtime"
 	"strconv"
 	"strings"
-
-	"github.com/pkg/errors"
 )
 
 var TestFunctionsCalled = map[string]bool{
@@ -68,22 +67,22 @@ func Parse(value string) (Money, error) {
 
 	parts := strings.Split(value, ".")
 	if len(parts) != 2 || (len(parts[1]) != 2 && len(parts[1]) != 4) {
-		return Money{}, errors.Errorf("not valid money: %s, must have 2 or 4 decimals", value)
+		return Money{}, fmt.Errorf("not valid money: %s, must have 2 or 4 decimals", value)
 	}
 
 	if len(parts[0]) > 1 && parts[0][0] == '0' {
-		return Money{}, errors.Errorf("not valid money: %s, cannot have leading zeros", value)
+		return Money{}, fmt.Errorf("not valid money: %s, cannot have leading zeros", value)
 	}
 
 	// Note the 63 bit here. We are converting to int64 later on, which means that 63 is all
 	// we are going to be able to report.
 	whole, err := strconv.ParseUint(parts[0], 10, 63)
 	if err != nil {
-		return Money{}, errors.Errorf("not valid money: %s (parts[0]=%s)", value, parts[0])
+		return Money{}, fmt.Errorf("not valid money: %s (parts[0]=%s)", value, parts[0])
 	}
 	fraccent, err := strconv.ParseUint(parts[1], 10, 16)
 	if err != nil {
-		return Money{}, errors.Errorf("not valid money: %s (parts[1]=%s)", value, parts[1])
+		return Money{}, fmt.Errorf("not valid money: %s (parts[1]=%s)", value, parts[1])
 	}
 
 	// This will never overflow, since the max we parse in fraccent is 16 bit, and we
@@ -97,12 +96,12 @@ func Parse(value string) (Money, error) {
 
 	hi, lo := bits.Mul64(whole, 10000)
 	if hi != 0 {
-		return Money{}, errors.Errorf("The amount %s would overflow an uint64 if converted to cents", value)
+		return Money{}, fmt.Errorf("The amount %s would overflow an uint64 if converted to cents", value)
 	}
 
 	cc, carry := bits.Add64(lo, fraccent, 0)
 	if carry != 0 {
-		return Money{}, errors.Errorf("The amount %s would overflow an uint64 if converted to cents", value)
+		return Money{}, fmt.Errorf("The amount %s would overflow an uint64 if converted to cents", value)
 	}
 
 	if sign == 1 {
@@ -128,11 +127,11 @@ func (target *Money) Scan(value interface{}) error {
 		case string:
 			strvalue = s
 		default:
-			return errors.Errorf("not valid money: %v", value)
+			return fmt.Errorf("not valid money: %v", value)
 		}
 		parsed, err := Parse(strvalue)
 		if err != nil {
-			return errors.WithStack(err)
+			return err
 		}
 		*target = parsed
 		return nil
