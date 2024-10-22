@@ -12,7 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/vippsas/go-querysql/querysql"
 	"github.com/vippsas/go-querysql/querysql/testhelper"
-	"github.com/vippsas/golib/money"
 )
 
 type MyArray [5]byte
@@ -407,7 +406,10 @@ func TestEmptyScalar(t *testing.T) {
 	rs := querysql.New(context.Background(), sqldb, qry)
 	rows := rs.Rows
 	_, err := querysql.NextResult(rs, querysql.SingleOf[int])
-	assert.Equal(t, querysql.NewZeroRowsExpectedOne(sql.ErrNoRows), err)
+	assert.Error(t, err)
+	assert.True(t, errors.Is(err, querysql.ZeroRowsExpectedOne))
+	assert.False(t, errors.Is(querysql.ZeroRowsExpectedOne, err))
+	assert.NotEqual(t, querysql.ZeroRowsExpectedOne, err)
 	assert.True(t, isClosed(rows))
 }
 
@@ -421,7 +423,10 @@ func TestEmptyStruct(t *testing.T) {
 	rs := querysql.New(context.Background(), sqldb, qry)
 	rows := rs.Rows
 	_, err := querysql.NextResult(rs, querysql.SingleOf[row])
-	assert.Equal(t, querysql.NewZeroRowsExpectedOne(sql.ErrNoRows), err)
+	assert.Error(t, err)
+	assert.True(t, errors.Is(err, querysql.ZeroRowsExpectedOne))
+	assert.False(t, errors.Is(querysql.ZeroRowsExpectedOne, err))
+	assert.NotEqual(t, querysql.ZeroRowsExpectedOne, err)
 	assert.True(t, isClosed(rows))
 	assert.True(t, rs.Done())
 }
@@ -471,7 +476,7 @@ func TestManyScalar(t *testing.T) {
 	rows := rs.Rows
 
 	_, err := querysql.NextResult(rs, querysql.SingleOf[int])
-	assert.Equal(t, querysql.NewManyRowsExpectedOne(), err)
+	assert.Equal(t, querysql.ManyRowsExpectedOne, err)
 	assert.True(t, isClosed(rows))
 	assert.True(t, rs.Done())
 }
@@ -702,10 +707,10 @@ values (42.00);
 	_, err := querysql.ExecContext(ctx, sqldb, qry, "world")
 	assert.NoError(t, err)
 
-	_, err = querysql.Single[*money.Money](ctx, sqldb, `select top(1) Amount from MyMoney`)
+	_, err = querysql.Single[*testhelper.Money](ctx, sqldb, `select top(1) Amount from MyMoney`)
 	assert.Error(t, err)
 
-	m, err := querysql.Single[money.Money](ctx, sqldb, `select top(1) Amount from MyMoney`)
+	m, err := querysql.Single[testhelper.Money](ctx, sqldb, `select top(1) Amount from MyMoney`)
 	assert.NoError(t, err)
 	assert.Equal(t, "42.00", m.String())
 }
