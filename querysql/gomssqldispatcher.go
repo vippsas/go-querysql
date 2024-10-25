@@ -4,16 +4,18 @@ import (
 	"database/sql"
 	"fmt"
 	"reflect"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
 )
 
 type funcInfo struct {
-	name    string
-	numArgs int
-	argType []reflect.Type
-	valueOf reflect.Value
+	name      string
+	numArgs   int
+	isClosure bool
+	argType   []reflect.Type
+	valueOf   reflect.Value
 }
 
 func GoMSSQLDispatcher(fs []interface{}) RowsGoDispatcher {
@@ -30,13 +32,21 @@ func GoMSSQLDispatcher(fs []interface{}) RowsGoDispatcher {
 		}
 
 		fInfo.valueOf = reflect.ValueOf(f)
-		getFunctionName := func(fullName string) string {
+		getFunctionName := func(fullName string) (string, bool) {
 			paths := strings.Split(fullName, "/")
 			lastPath := paths[len(paths)-1]
 			parts := strings.Split(lastPath, ".")
-			return parts[len(parts)-1]
+			fName := parts[len(parts)-1]
+			matched, err := regexp.Match(`func\d+`, []byte(fName))
+			if err != nil {
+				panic(err.Error())
+			}
+			if matched {
+				return parts[len(parts)-2], true // It is a closure
+			}
+			return fName, false
 		}
-		fInfo.name = getFunctionName(runtime.FuncForPC(fInfo.valueOf.Pointer()).Name())
+		fInfo.name, fInfo.isClosure = getFunctionName(runtime.FuncForPC(fInfo.valueOf.Pointer()).Name())
 
 		if knownFuncs == "" {
 			knownFuncs = fmt.Sprintf("'%s'", fInfo.name)
@@ -50,6 +60,9 @@ func GoMSSQLDispatcher(fs []interface{}) RowsGoDispatcher {
 
 		for i := 0; i < fInfo.numArgs; i++ {
 			fInfo.argType[i] = funcType.In(i)
+		}
+		if _, in := funcMap[fInfo.name]; in {
+			panic(fmt.Sprintf("Function already in dispatcher %s (closure==%v)", fInfo.name, fInfo.isClosure))
 		}
 		funcMap[fInfo.name] = fInfo
 	}

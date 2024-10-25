@@ -714,3 +714,64 @@ values (42.00);
 	assert.NoError(t, err)
 	assert.Equal(t, "42.00", m.String())
 }
+
+func TestAnonDispatcherFunc(t *testing.T) {
+	qry := `
+if OBJECT_ID('dbo.MyUsers', 'U') is not null drop table MyUsers
+create table MyUsers (
+    ID INT IDENTITY(1,1) PRIMARY KEY,
+    Username NVARCHAR(50)
+);
+insert into MyUsers (Username) values ('JohnDoe');
+
+-- logging
+select _log='info', Y = 'one';
+
+-- dispatcher
+select _function='TestFunction', component = 'abc', val=1, time=1.23;
+
+select _function='ReturnAnonFunc', label = 'myLabel', time=1.23;
+`
+
+	var hook LogHook
+	logger := logrus.StandardLogger()
+	logger.Hooks.Add(&hook)
+	ctx := querysql.WithLogger(context.Background(), querysql.LogrusMSSQLLogger(logger, logrus.InfoLevel))
+	ctx = querysql.WithDispatcher(ctx, querysql.GoMSSQLDispatcher([]interface{}{
+		testhelper.TestFunction,
+		testhelper.ReturnAnonFunc("myComponent"),
+	}))
+	testhelper.ResetTestFunctionsCalled()
+
+	_, err := querysql.ExecContext(ctx, sqldb, qry, "world")
+	assert.NoError(t, err)
+
+	assert.True(t, testhelper.TestFunctionsCalled["ReturnAnonFunc.myComponent"])
+
+	// Check that we have exhausted the logging select before we do the call that gets ErrNoMoreSets
+	assert.Equal(t, []logrus.Fields{
+		{"Y": "one"},
+	}, hook.lines)
+
+	assert.True(t, testhelper.TestFunctionsCalled["TestFunction"])
+}
+
+func TestDispatcherPanicsWithTwoAnonFuncs(t *testing.T) {
+	var mustNotBeTrue bool
+	var hook LogHook
+	logger := logrus.StandardLogger()
+	logger.Hooks.Add(&hook)
+	defer func() {
+		r := recover()
+		assert.NotNil(t, r) // nil if a panic didn't happen, not nil if a panic happened
+		assert.False(t, mustNotBeTrue)
+	}()
+
+	ctx := querysql.WithLogger(context.Background(), querysql.LogrusMSSQLLogger(logger, logrus.InfoLevel))
+	ctx = querysql.WithDispatcher(ctx, querysql.GoMSSQLDispatcher([]interface{}{
+		testhelper.ReturnAnonFunc("myComponent"),
+		testhelper.ReturnAnonFunc("myComponent2"), // This should cause a panic
+	}))
+	// Nothing here gets executed because we expect the WithDispatcher to have panicked
+	mustNotBeTrue = true
+}
