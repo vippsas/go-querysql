@@ -23,6 +23,12 @@ func OtherTestFunction(time float64, money float64) {
 	TestFunctionsCalled[getFunctionName()] = true
 }
 
+func ReturnAnonFunc(component string) func(string, float64) {
+	return func(label string, time float64) {
+		TestFunctionsCalled[fmt.Sprintf("ReturnAnonFunc.%s", component)] = true
+	}
+}
+
 func ResetTestFunctionsCalled() {
 	for k, _ := range TestFunctionsCalled {
 		TestFunctionsCalled[k] = false
