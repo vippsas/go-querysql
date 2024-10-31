@@ -20,7 +20,7 @@ func initdb() (*sql.DB, error) {
 }
 
 func populatedb(ctx context.Context, sqldb *sql.DB) error {
-	qry := `if object_id('dbo.MyUsers', 'U') is not null drop table MyUsers
+	qry := `drop table if exists
 	create table MyUsers (
 		Id int identity(1,1) primary key,
 		UserName nvarchar(50) not null,
