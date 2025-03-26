@@ -1,7 +1,6 @@
 module github.com/vippsas/go-querysql
 
-go 1.21
-toolchain go1.23.7
+go 1.23.7
 
 require (
 	github.com/denisenkom/go-mssqldb v0.12.3
