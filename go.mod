@@ -1,13 +1,14 @@
 module github.com/vippsas/go-querysql
 
 go 1.23.7
+toolchain go1.24.1
 
 require (
 	github.com/denisenkom/go-mssqldb v0.12.3
 	github.com/google/uuid v1.6.0
 	github.com/sirupsen/logrus v1.9.3
 	github.com/stretchr/testify v1.10.0
-	golang.org/x/net v0.37.0
+	golang.org/x/net v0.38.0
 )
 
 require (
