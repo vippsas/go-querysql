@@ -103,6 +103,7 @@ func logrusEmitLogEntry(logger logrus.FieldLogger, level logrus.Level) {
 	case logrus.InfoLevel:
 		logger.Info()
 	case logrus.DebugLevel:
+		logger.Debug()
 	case logrus.TraceLevel:
 		logger.Debug()
 	default:
