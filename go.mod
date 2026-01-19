@@ -5,7 +5,7 @@ go 1.24.0
 require (
 	github.com/denisenkom/go-mssqldb v0.12.3
 	github.com/google/uuid v1.6.0
-	github.com/sirupsen/logrus v1.9.3
+	github.com/sirupsen/logrus v1.9.4
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/net v0.48.0
 )
