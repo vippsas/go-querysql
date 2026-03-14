@@ -164,6 +164,51 @@ automatically closed; although it is still a good idea to `defer rs.Close()` in
 case you do not reach the point where `rs.Done() == true`.
 
 
+## Struct tags
+
+The `refl` struct tag controls how querysql maps SQL columns to struct fields.
+
+### `refl:"recurse"` — recurse into named struct fields
+
+By default, querysql only recurses into **anonymous (embedded)** struct fields.
+Use `refl:"recurse"` on a named struct field to also flatten its sub-fields:
+
+```go
+type Address struct {
+    Street string
+    City   string
+}
+
+type Person struct {
+    Name    string
+    Address Address `refl:"recurse"` // Street and City are mapped as top-level columns
+}
+```
+
+### `refl:"optional"` — tolerate absent SQL columns
+
+Mark a field as optional to silently use its zero value when the SQL query does
+not return a matching column. Without this tag, a missing column produces an
+error (`"failed to map all struct fields to query columns"`).
+
+```go
+type Row struct {
+    ID    int
+    Score *float64 `refl:"optional"` // stays nil if the query doesn't return "Score"
+}
+```
+
+### Combining tags
+
+Both options can be combined on the same field:
+
+```go
+type Row struct {
+    Name  string
+    Extra ExtraFields `refl:"recurse,optional"` // recurse AND treat all sub-fields as optional
+}
+```
+
 ## Future plans
 
 * Allow querying directly into `map` types, using the first columns
