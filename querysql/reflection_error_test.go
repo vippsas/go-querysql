@@ -95,6 +95,28 @@ func TestGetPointersToFields_RequiredFieldMissingWithOptionalPresent(t *testing.
 	})
 }
 
+// TestGetPointersToFields_RequiredFieldMissingWhenOptionalFieldPresentInQuery is a regression
+// test for a bug where `n` (total mapped columns) was compared against `requiredCount` instead
+// of counting only required mapped columns. When an optional column was present in the query,
+// `n` could equal `requiredCount` even though a required field had no matching column.
+func TestGetPointersToFields_RequiredFieldMissingWhenOptionalFieldPresentInQuery(t *testing.T) {
+	type row struct {
+		X int
+		Y string    // required — will be absent from query
+		Z int `refl:"optional"` // optional — will be present in query
+	}
+	// Query returns X and Z (optional), but omits Y (required).
+	// Old code: n=2, requiredCount=2 → 2 < 2 → no error (bug).
+	// Fixed code: requiredMapped=1 (only X), len(requiredNames)=2 → error.
+	rs := querysql.New(context.Background(), sqldb, `select X = 1, Z = 99`)
+	defer rs.Close()
+
+	_, err := querysql.NextResult(rs, querysql.SingleOf[row])
+	require.Error(t, err, "expected error because required field Y is missing from query")
+	assert.Contains(t, err.Error(), "failed to map all struct fields to query columns")
+	assert.Contains(t, err.Error(), "y")
+}
+
 func TestGetPointersToFields_MultipleFieldsMissingFromQuery(t *testing.T) {
 	type row struct {
 		X int

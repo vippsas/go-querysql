@@ -54,23 +54,27 @@ func getPointersToFields(rows *sql.Rows, pointerToStruct interface{}) ([]interfa
 
 	// Demand that all non-optional fields in the struct get filled.
 	// Optional fields that have no matching column simply keep their zero value.
-	requiredCount := 0
 	requiredNames := []string{}
 	for _, name := range names {
 		if !optionalSet[name] {
-			requiredCount++
 			requiredNames = append(requiredNames, name)
 		}
 	}
-	if n < requiredCount {
+	requiredMapped := 0
+	for _, mappedName := range mappedNames {
+		if !optionalSet[mappedName] {
+			requiredMapped++
+		}
+	}
+	if requiredMapped < len(requiredNames) {
 		diff := stringSliceDiff(requiredNames, columns)
 		return nil, fmt.Errorf("failed to map all struct fields to query columns (names: %v, columns: %v, diff: %v)", requiredNames, columns, diff)
 	}
 
 	// Demand that all query columns gets scanned
 	if len(columns) > len(ptrs) {
-		diff := stringSliceDiff(requiredNames, columns)
-		return nil, fmt.Errorf("failed to map all query columns to struct fields (names: %v, columns: %v, diff: %v)", requiredNames, columns, diff)
+		diff := stringSliceDiff(names, columns)
+		return nil, fmt.Errorf("failed to map all query columns to struct fields (names: %v, columns: %v, diff: %v)", names, columns, diff)
 	}
 	return ptrs, nil
 }
