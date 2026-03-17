@@ -583,6 +583,73 @@ func TestStructScanError(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestOptionalField_AbsentFromQuery(t *testing.T) {
+	// An optional field that has no matching SQL column keeps its zero value.
+	type rowWithOptional struct {
+		X int
+		Y int    `refl:"optional"`
+	}
+
+	rows, err := querysql.Slice[rowWithOptional](context.Background(), sqldb, `select 1 as X`)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, rowWithOptional{X: 1, Y: 0}, rows[0])
+}
+
+func TestOptionalField_PresentInQuery(t *testing.T) {
+	// An optional field that IS present in the SQL result is populated normally.
+	type rowWithOptional struct {
+		X int
+		Y int `refl:"optional"`
+	}
+
+	rows, err := querysql.Slice[rowWithOptional](context.Background(), sqldb, `select 1 as X, 2 as Y`)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, rowWithOptional{X: 1, Y: 2}, rows[0])
+}
+
+func TestOptionalField_PointerTypeStaysNil(t *testing.T) {
+	// An optional pointer field has no matching column and stays nil.
+	type rowWithOptionalPtr struct {
+		X int
+		Y *int `refl:"optional"`
+	}
+
+	rows, err := querysql.Slice[rowWithOptionalPtr](context.Background(), sqldb, `select 42 as X`)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, 42, rows[0].X)
+	assert.Nil(t, rows[0].Y)
+}
+
+func TestOptionalField_NonOptionalMissingStillErrors(t *testing.T) {
+	// A non-optional field that has no matching SQL column still produces an error.
+	type rowRequired struct {
+		X int
+		Y int
+	}
+
+	_, err := querysql.Slice[rowRequired](context.Background(), sqldb, `select 1 as X`)
+	assert.Error(t, err)
+}
+
+func TestOptionalField_RecurseAndOptionalCombined(t *testing.T) {
+	// refl:"recurse,optional" on a named struct field: its sub-fields are optional.
+	type extra struct {
+		Z int
+	}
+	type row struct {
+		X     int
+		Extra extra `refl:"recurse,optional"`
+	}
+
+	rows, err := querysql.Slice[row](context.Background(), sqldb, `select 1 as X`)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, row{X: 1, Extra: extra{Z: 0}}, rows[0])
+}
+
 func TestExecContext(t *testing.T) {
 	qry := `
 if OBJECT_ID('dbo.MyUsers', 'U') is not null drop table MyUsers

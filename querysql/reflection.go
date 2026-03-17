@@ -23,6 +23,13 @@ func getPointersToFields(rows *sql.Rows, pointerToStruct interface{}) ([]interfa
 		names[i] = canonicalName(name)
 	}
 
+	// Get the names of fields marked refl:"optional"; these are allowed to
+	// be absent from the query result and will keep their zero value.
+	optionalSet := make(map[string]bool)
+	for _, name := range deepOptionalFieldNamesOfStructType(reflect.TypeOf(pointerToStruct)) {
+		optionalSet[canonicalName(name)] = true
+	}
+
 	// Build a mapping from name to index, this index is
 	// both for names[i] and origPtrs[i]
 	name2index := make(map[string]int, len(names))
@@ -36,19 +43,30 @@ func getPointersToFields(rows *sql.Rows, pointerToStruct interface{}) ([]interfa
 	// Reorder pointers to match query column order
 	ptrs := make([]interface{}, 0, len(columns))
 	mappedNames := make([]string, 0, len(columns))
-	n := 0
 	for _, col := range columns {
 		if j, ok := name2index[col]; ok {
 			ptrs = append(ptrs, origPtrs[j])
 			mappedNames = append(mappedNames, names[j])
-			n++
 		}
 	}
 
-	// Demand that all fields in struct gets filled
-	if n != len(names) {
-		diff := stringSliceDiff(names, columns)
-		return nil, fmt.Errorf("failed to map all struct fields to query columns (names: %v, columns: %v, diff: %v)", names, columns, diff)
+	// Demand that all non-optional fields in the struct get filled.
+	// Optional fields that have no matching column simply keep their zero value.
+	requiredNames := []string{}
+	for _, name := range names {
+		if !optionalSet[name] {
+			requiredNames = append(requiredNames, name)
+		}
+	}
+	requiredMapped := 0
+	for _, mappedName := range mappedNames {
+		if !optionalSet[mappedName] {
+			requiredMapped++
+		}
+	}
+	if requiredMapped < len(requiredNames) {
+		diff := stringSliceDiff(requiredNames, columns)
+		return nil, fmt.Errorf("failed to map all struct fields to query columns (names: %v, columns: %v, diff: %v)", requiredNames, columns, diff)
 	}
 
 	// Demand that all query columns gets scanned
@@ -107,6 +125,17 @@ func MustStructType(v reflect.Type) reflect.Type {
 	return v
 }
 
+// hasReflTag reports whether the struct tag's "refl" value contains option.
+// The value may be a comma-separated list, e.g. `refl:"recurse,optional"`.
+func hasReflTag(tag reflect.StructTag, option string) bool {
+	for _, part := range strings.Split(tag.Get("refl"), ",") {
+		if part == option {
+			return true
+		}
+	}
+	return false
+}
+
 func deepFieldsOfStructValue(val reflect.Value) []reflect.Value {
 	v := MustStructValue(val)
 	n := v.NumField()
@@ -115,7 +144,7 @@ func deepFieldsOfStructValue(val reflect.Value) []reflect.Value {
 		f := v.Field(i)
 		tf := v.Type().Field(i)
 		k := tf.Type.Kind()
-		if k == reflect.Struct && (tf.Anonymous || tf.Tag.Get("refl") == "recurse") {
+		if k == reflect.Struct && (tf.Anonymous || hasReflTag(tf.Tag, "recurse")) {
 			fields = append(fields, deepFieldsOfStructValue(f)...)
 		} else {
 			fields = append(fields, f)
@@ -136,10 +165,36 @@ func deepFieldNamesOfStructType(typ reflect.Type) []string {
 	for i := 0; i < n; i++ {
 		f := t.Field(i)
 		k := f.Type.Kind()
-		if k == reflect.Struct && (f.Anonymous || f.Tag.Get("refl") == "recurse") {
+		if k == reflect.Struct && (f.Anonymous || hasReflTag(f.Tag, "recurse")) {
 			names = append(names, deepFieldNamesOfStructType(f.Type)...)
 		} else {
 			names = append(names, t.Field(i).Name)
+		}
+	}
+	return names
+}
+
+// deepOptionalFieldNamesOfStructType returns the names of fields marked with
+// the refl:"optional" tag.
+//
+// When a struct field carries refl:"recurse,optional", all child fields recursed
+// from it are also treated as optional.
+func deepOptionalFieldNamesOfStructType(typ reflect.Type) []string {
+	return deepOptionalFieldNamesHelper(typ, false)
+}
+
+func deepOptionalFieldNamesHelper(typ reflect.Type, parentOptional bool) []string {
+	t := MustStructType(typ)
+	n := t.NumField()
+	names := make([]string, 0)
+	for i := 0; i < n; i++ {
+		f := t.Field(i)
+		k := f.Type.Kind()
+		isOptional := parentOptional || hasReflTag(f.Tag, "optional")
+		if k == reflect.Struct && (f.Anonymous || hasReflTag(f.Tag, "recurse")) {
+			names = append(names, deepOptionalFieldNamesHelper(f.Type, isOptional)...)
+		} else if isOptional {
+			names = append(names, f.Name)
 		}
 	}
 	return names
