@@ -43,12 +43,10 @@ func getPointersToFields(rows *sql.Rows, pointerToStruct interface{}) ([]interfa
 	// Reorder pointers to match query column order
 	ptrs := make([]interface{}, 0, len(columns))
 	mappedNames := make([]string, 0, len(columns))
-	n := 0
 	for _, col := range columns {
 		if j, ok := name2index[col]; ok {
 			ptrs = append(ptrs, origPtrs[j])
 			mappedNames = append(mappedNames, names[j])
-			n++
 		}
 	}
 
