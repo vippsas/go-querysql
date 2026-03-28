@@ -4,12 +4,13 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"log"
 
 	"github.com/sirupsen/logrus"
 )
 
-// LogrusMSSQLLogger returns a basic RowsLogger suitable for the combination of MS SQL and logrus
-func LogrusMSSQLLogger(logger logrus.FieldLogger, defaultLogLevel logrus.Level) RowsLogger {
+func StdMSSQLLogger(logger *log.Logger) RowsLogger {
+	defaultLogLevel := logrus.InfoLevel
 	return func(rows *sql.Rows) error {
 		var logLevel string
 
@@ -39,14 +40,14 @@ func LogrusMSSQLLogger(logger logrus.FieldLogger, defaultLogLevel logrus.Level) 
 			}
 			parsedLogLevel, err := logrus.ParseLevel(logLevel)
 			if err != nil {
-				logrusEmitLogEntry(logger.WithFields(logrus.Fields{
+				emitLogEntry(logger, logrus.Fields{
 					"event":         "invalid.log.level",
 					"invalid.level": logLevel,
-				}), logrus.ErrorLevel)
+				}, logrus.ErrorLevel)
 				parsedLogLevel = defaultLogLevel
 			}
 
-			sublogger := logger
+			logrusFields := logrus.Fields{}
 			for i, value := range fields {
 				if i == 0 {
 					continue
@@ -66,9 +67,9 @@ func LogrusMSSQLLogger(logger logrus.FieldLogger, defaultLogLevel logrus.Level) 
 						value = "0x" + hex.EncodeToString(typedValue)
 					}
 				}
-				sublogger = sublogger.WithField(cols[i], value)
+				logrusFields[cols[i]] = value
 			}
-			logrusEmitLogEntry(sublogger, parsedLogLevel)
+			emitLogEntry(logger, logrusFields, parsedLogLevel)
 		}
 		if err = rows.Err(); err != nil {
 			return err
@@ -78,33 +79,31 @@ func LogrusMSSQLLogger(logger logrus.FieldLogger, defaultLogLevel logrus.Level) 
 			// an indication that the log statement was there, with an empty table
 			// in this case loglevel is unreachable, and we really can only log the keys,
 			// but let's hope INFO isn't overboard
-			l := logger.WithField("_norows", true)
+			logrusFields := logrus.Fields{}
+			logrusFields["_norows"] = true
 			for _, col := range cols[1:] {
-				l = l.WithField(col, "")
+				logrusFields[col] = ""
 			}
-			logrusEmitLogEntry(l, defaultLogLevel)
+			emitLogEntry(logger, logrusFields, defaultLogLevel)
 		}
 		return nil
 	}
 }
 
-func logrusEmitLogEntry(logger logrus.FieldLogger, level logrus.Level) {
+func emitLogEntry(logger *log.Logger, fields logrus.Fields, level logrus.Level) {
+	str := ""
+	for k, v := range fields {
+		str += fmt.Sprintf(" %s='%v'", k, v)
+	}
 	switch level {
 	case logrus.PanicLevel:
-		logger.Panic()
+		logger.Panic(str)
 	case logrus.FatalLevel:
-		logger.Fatal()
-	case logrus.ErrorLevel:
-		logger.Error()
-	case logrus.WarnLevel:
-		logger.Warning()
-	case logrus.InfoLevel:
-		logger.Info()
-	case logrus.DebugLevel:
-		logger.Debug()
-	case logrus.TraceLevel:
-		logger.Debug()
+		logger.Fatal(str)
+	case logrus.ErrorLevel, logrus.WarnLevel, logrus.DebugLevel, logrus.TraceLevel, logrus.InfoLevel:
+		str = fmt.Sprintf("level=%s %s", level.String(), str)
+		logger.Print(str)
 	default:
-		panic(fmt.Sprintf("Log level %d not handled in logrusEmitLogEntry", level))
+		panic(fmt.Sprintf("Log level %d not handled in emitLogEntry", level))
 	}
 }
