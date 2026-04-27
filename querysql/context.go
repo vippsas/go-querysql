@@ -23,28 +23,15 @@ func Logger(ctx context.Context) RowsLogger {
 	return nil
 }
 
-// WithDispatcher registers either a RowsGoDispatcher or a DeferredRowsGoDispatcher on the context.
-func WithDispatcher(ctx context.Context, dispatcher any) context.Context {
+// WithDispatcher registers a dispatcher for _function result sets.
+func WithDispatcher(ctx context.Context, dispatcher RowsGoDispatcher) context.Context {
 	return context.WithValue(ctx, ckRowsDispatcher, dispatcher)
 }
 
-func dispatcherValue(ctx context.Context) any {
-	l := ctx.Value(ckRowsDispatcher)
-	return l
-}
-
-// Dispatcher returns the legacy immediate dispatcher, if one was registered.
-// Deferred dispatchers are available internally through the context value used by ResultSets.
 func Dispatcher(ctx context.Context) RowsGoDispatcher {
 	l := ctx.Value(ckRowsDispatcher)
 	if l == nil {
 		return nil
 	}
-
-	dispatcher, ok := l.(RowsGoDispatcher)
-	if !ok {
-		return nil
-	}
-
-	return dispatcher
+	return l.(RowsGoDispatcher)
 }

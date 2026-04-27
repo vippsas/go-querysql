@@ -26,7 +26,7 @@ type goMSSQLDispatcher struct {
 	pending    []deferredFuncCall
 }
 
-func GoMSSQLDispatcher(fs []interface{}) DeferredRowsGoDispatcher {
+func GoMSSQLDispatcher(fs []interface{}) RowsGoDispatcher {
 	dispatcher := &goMSSQLDispatcher{
 		funcMap: map[string]funcInfo{},
 	}

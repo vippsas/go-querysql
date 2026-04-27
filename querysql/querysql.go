@@ -34,13 +34,8 @@ func (_ NotImplementedSqlResult) RowsAffected() (int64, error) {
 // The convention is that the first column will always contain the log level.
 type RowsLogger func(rows *sql.Rows) error
 
-// RowsGoDispatcher takes a sql.Rows and calls a Go function.  The first argument,
-// __function is the function name, the other arguments are the arguments to the Go function.
-type RowsGoDispatcher func(rows *sql.Rows) error
-
-// DeferredRowsGoDispatcher buffers dispatcher rows until the query has a final outcome.
-// Implementations can decide in Finalize whether buffered calls should run or be skipped.
-type DeferredRowsGoDispatcher interface {
+// RowsGoDispatcher processes dispatcher result sets and finalizes them when the query outcome is known.
+type RowsGoDispatcher interface {
 	ProcessRows(rows *sql.Rows) error
 	Finalize(queryErr error) error
 }
@@ -69,9 +64,8 @@ type ResultSets struct {
 	LogKeyLowercase string
 
 	// "select _function=MyFunction" will attempt to call a Go function (in this case MyFunction)
-	// with the remaining arguments to the select as arguments to the function call.
-	// Dispatcher can be either a RowsGoDispatcher or a DeferredRowsGoDispatcher.
-	Dispatcher any
+	// with the remaining arguments to the select as arguments to the function call once the query succeeds.
+	Dispatcher RowsGoDispatcher
 
 	started             bool
 	dispatcherFinalized bool
@@ -89,7 +83,7 @@ func New(ctx context.Context, querier CtxQuerier, qry string, args ...any) *Resu
 		started:    false,
 		Err:        err, // important to return the error unadorned here, as some code e.g. casts it directly to mssql.Error
 		Logger:     Logger(ctx),
-		Dispatcher: dispatcherValue(ctx),
+		Dispatcher: Dispatcher(ctx),
 	}
 }
 
@@ -137,17 +131,8 @@ func (rs *ResultSets) processDispatcherSelect() error {
 		return fmt.Errorf("missing dispatcher")
 	}
 
-	switch dispatcher := rs.Dispatcher.(type) {
-	case RowsGoDispatcher:
-		if err := dispatcher(rs.Rows); err != nil {
-			return err
-		}
-	case DeferredRowsGoDispatcher:
-		if err := dispatcher.ProcessRows(rs.Rows); err != nil {
-			return err
-		}
-	default:
-		return fmt.Errorf("unsupported dispatcher type %T", rs.Dispatcher)
+	if err := rs.Dispatcher.ProcessRows(rs.Rows); err != nil {
+		return err
 	}
 	// a well-written dispatchers would return rs.Rows.Err(), but just be certain this isn't overlooked...
 	return rs.Rows.Err()
@@ -159,12 +144,11 @@ func (rs *ResultSets) finalizeDispatcher(queryErr error) error {
 	}
 	rs.dispatcherFinalized = true
 
-	dispatcher, ok := rs.Dispatcher.(DeferredRowsGoDispatcher)
-	if !ok {
+	if rs.Dispatcher == nil {
 		return queryErr
 	}
 
-	if err := dispatcher.Finalize(queryErr); err != nil {
+	if err := rs.Dispatcher.Finalize(queryErr); err != nil {
 		if queryErr != nil {
 			return errors.Join(queryErr, err)
 		}
@@ -584,7 +568,6 @@ func ExecContext(
 			return nil, err
 		}
 	}
-	return NotImplementedSqlResult{}, nil
 }
 
 func Exec(querier CtxQuerier, qry string, args ...any) (sql.Result, error) {
