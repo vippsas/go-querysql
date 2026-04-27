@@ -34,9 +34,11 @@ func (_ NotImplementedSqlResult) RowsAffected() (int64, error) {
 // The convention is that the first column will always contain the log level.
 type RowsLogger func(rows *sql.Rows) error
 
-// RowsGoDispatcher takes a sql.Rows and calls a Go function.  The first argument,
-// __function is the function name, the other arguments are the arguments to the Go function.
-type RowsGoDispatcher func(rows *sql.Rows) error
+// RowsGoDispatcher processes dispatcher result sets and finalizes them when the query outcome is known.
+type RowsGoDispatcher interface {
+	ProcessRows(rows *sql.Rows) error
+	Finalize(queryErr error) error
+}
 
 // ResultSets is a tiny wrapper around sql.Rows to help managing whether to call NextResultSet or not.
 // It is fine to instantiate this struct yourself.
@@ -61,11 +63,12 @@ type ResultSets struct {
 	// It will be compared with the lowercase name of the column.
 	LogKeyLowercase string
 
-	// "select _function=MyFunction" will attempt to fall a Go function (in this case MyFunction)
-	// with the remaining arguments to the select as arguments to the function call
+	// "select _function=MyFunction" will attempt to call a Go function (in this case MyFunction)
+	// with the remaining arguments to the select as arguments to the function call once the query succeeds.
 	Dispatcher RowsGoDispatcher
 
-	started bool
+	started             bool
+	dispatcherFinalized bool
 }
 
 // hook for tests
@@ -128,11 +131,31 @@ func (rs *ResultSets) processDispatcherSelect() error {
 		return fmt.Errorf("missing dispatcher")
 	}
 
-	if err := rs.Dispatcher(rs.Rows); err != nil {
+	if err := rs.Dispatcher.ProcessRows(rs.Rows); err != nil {
 		return err
 	}
 	// a well-written dispatchers would return rs.Rows.Err(), but just be certain this isn't overlooked...
 	return rs.Rows.Err()
+}
+
+func (rs *ResultSets) finalizeDispatcher(queryErr error) error {
+	if rs.dispatcherFinalized {
+		return queryErr
+	}
+	rs.dispatcherFinalized = true
+
+	if rs.Dispatcher == nil {
+		return queryErr
+	}
+
+	if err := rs.Dispatcher.Finalize(queryErr); err != nil {
+		if queryErr != nil {
+			return errors.Join(queryErr, err)
+		}
+		return err
+	}
+
+	return queryErr
 }
 
 // NextResult reads the next result set from `rs`, into the type/scanner provided in the `typ`
@@ -170,7 +193,7 @@ func (rs *ResultSets) processAllSpecialSelects() (hadColumns bool, err error) {
 		var cols []string
 		cols, err = rs.Rows.Columns()
 		if err != nil {
-			return false, err
+			return false, rs.finalizeDispatcher(err)
 		}
 		if len(cols) == 0 {
 			// This happens in the event that there's no result sets in the query at all
@@ -179,24 +202,24 @@ func (rs *ResultSets) processAllSpecialSelects() (hadColumns bool, err error) {
 
 		if rs.hasLogColumn(cols) {
 			if err = rs.processLogSelect(); err != nil {
-				return false, err
+				return false, rs.finalizeDispatcher(err)
 			}
 			if err = rs.nextResultSet(); err != nil {
-				return false, err
+				return false, rs.finalizeDispatcher(err)
 			}
 		} else if rs.hasDispatcherColumn(cols) {
 			if err = rs.processDispatcherSelect(); err != nil {
-				return false, err
+				return false, rs.finalizeDispatcher(err)
 			}
 			if err = rs.nextResultSet(); err != nil {
-				return false, err
+				return false, rs.finalizeDispatcher(err)
 			}
 		} else {
 			// non-logging select; return
 			return true, nil
 		}
 	}
-	return true, nil
+	return true, rs.finalizeDispatcher(nil)
 }
 
 func (rs *ResultSets) Done() bool {
@@ -207,8 +230,13 @@ func (rs *ResultSets) nextResultSet() error {
 	if rs.Rows.NextResultSet() {
 		return nil
 	} else {
+		err := rs.Rows.Err()
 		// we have exhausted the results; automatically close Rows; this also ensures Done() returns true
-		return rs.Close()
+		closeErr := rs.Close()
+		if err != nil {
+			return err
+		}
+		return closeErr
 	}
 }
 
@@ -255,7 +283,7 @@ func Next(rs *ResultSets, scanner Target) error {
 		if scanner != nil {
 			if err := scanner.ScanRow(rs.Rows); err != nil {
 				defer func() { _ = rs.Close() }()
-				return err
+				return rs.finalizeDispatcher(err)
 			}
 		}
 	}
@@ -264,17 +292,17 @@ func Next(rs *ResultSets, scanner Target) error {
 		defer func() { _ = rs.Close() }()
 		// If we return the error here, we'll miss processing the result sets up to this point
 		// Instead of returning the error, we set rs.Err so that next call to Next will return the error
-		rs.Err = err
+		rs.Err = rs.finalizeDispatcher(err)
 		return nil
 	}
 
 	if err := rs.nextResultSet(); err != nil {
 		defer func() { _ = rs.Close() }()
-		return err
+		return rs.finalizeDispatcher(err)
 	}
 
 	if _, err := rs.processAllSpecialSelects(); err != nil {
-		return err
+		return rs.finalizeDispatcher(err)
 	}
 
 	if rs.DoneAfterNext {
@@ -285,6 +313,18 @@ func Next(rs *ResultSets, scanner Target) error {
 	}
 
 	return nil
+}
+
+func drain(rs *ResultSets) error {
+	for {
+		err := NextNoScanner(rs)
+		if err != nil {
+			if err == ErrNoMoreSets {
+				return nil
+			}
+			return err
+		}
+	}
 }
 
 func MustNext(rs *ResultSets, scanner Target) {
@@ -360,6 +400,9 @@ func Query(
 			return err
 		}
 	}
+	if err := drain(rs); err != nil {
+		return err
+	}
 	success = true
 	if err := rs.Close(); err != nil {
 		return err
@@ -392,6 +435,10 @@ func Query2[T1 any, T2 any](
 
 	t2, err := NextResult(rs, type2)
 	if err != nil {
+		return zero1, zero2, err
+	}
+
+	if err = drain(rs); err != nil {
 		return zero1, zero2, err
 	}
 
@@ -435,6 +482,10 @@ func Query3[T1 any, T2 any, T3 any](
 
 	t3, err := NextResult(rs, type3)
 	if err != nil {
+		return zero1, zero2, zero3, err
+	}
+
+	if err = drain(rs); err != nil {
 		return zero1, zero2, zero3, err
 	}
 
@@ -488,6 +539,10 @@ func Query4[T1 any, T2 any, T3 any, T4 any](
 		return zero1, zero2, zero3, zero4, err
 	}
 
+	if err = drain(rs); err != nil {
+		return zero1, zero2, zero3, zero4, err
+	}
+
 	success = true
 	if err = rs.Close(); err != nil {
 		return zero1, zero2, zero3, zero4, err
@@ -513,7 +568,6 @@ func ExecContext(
 			return nil, err
 		}
 	}
-	return NotImplementedSqlResult{}, nil
 }
 
 func Exec(querier CtxQuerier, qry string, args ...any) (sql.Result, error) {
