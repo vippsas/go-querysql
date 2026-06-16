@@ -25,5 +25,16 @@ jobs:
     - name: Start db
       run: docker compose -f docker-compose.test.yml up -d
 
+    - name: Wait for db
+      run: |
+        for i in {1..60}; do
+          if docker logs mssql 2>&1 | grep -q "SQL Server is now ready for client connections"; then
+            exit 0
+          fi
+          sleep 2
+        done
+        docker logs mssql
+        exit 1
+
     - name: Test
       run: go test -v ./...

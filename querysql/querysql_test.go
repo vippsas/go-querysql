@@ -317,6 +317,43 @@ func TestDispatcherRuntimeErrorsAndCornerCases(t *testing.T) {
 	}
 }
 
+func TestDispatcherDefersUntilQuerySuccessfullyCompletes(t *testing.T) {
+	qry := `
+select 1;
+select _function='TestFunction', component = 'abc', val=1, time=1.23;
+select 2;
+`
+
+	ctx := querysql.WithDispatcher(context.Background(), querysql.GoMSSQLDispatcher([]interface{}{
+		testhelper.TestFunction,
+	}))
+	rs := querysql.New(ctx, sqldb, qry)
+	testhelper.ResetTestFunctionsCalled()
+
+	assert.Equal(t, 1, querysql.MustNextResult(rs, querysql.SingleOf[int]))
+	assert.False(t, testhelper.TestFunctionsCalled["TestFunction"])
+
+	assert.Equal(t, 2, querysql.MustNextResult(rs, querysql.SingleOf[int]))
+	assert.True(t, testhelper.TestFunctionsCalled["TestFunction"])
+}
+
+func TestDispatcherSkippedWhenLaterQueryFails(t *testing.T) {
+	qry := `
+select _function='TestFunction', component = 'abc', val=1, time=1.23;
+throw 55002, 'Here is an error', 1;
+`
+
+	ctx := querysql.WithDispatcher(context.Background(), querysql.GoMSSQLDispatcher([]interface{}{
+		testhelper.TestFunction,
+	}))
+	testhelper.ResetTestFunctionsCalled()
+
+	_, err := querysql.ExecContext(ctx, sqldb, qry)
+	require.Error(t, err)
+	assert.Equal(t, "mssql: Here is an error", err.Error())
+	assert.False(t, testhelper.TestFunctionsCalled["TestFunction"])
+}
+
 func TestMultipleRowsetsPointers(t *testing.T) {
 	qry := `
 -- single scalar
@@ -550,6 +587,24 @@ func TestQueryPointers(t *testing.T) {
 	assert.Equal(t, []int{3, 4}, b)
 	assert.Equal(t, []string{"hello"}, c)
 	assert.Equal(t, []int(nil), d)
+}
+
+func TestQueryDrainsDeferredDispatchers(t *testing.T) {
+	var a int
+	ctx := querysql.WithDispatcher(context.Background(), querysql.GoMSSQLDispatcher([]interface{}{
+		testhelper.TestFunction,
+	}))
+	testhelper.ResetTestFunctionsCalled()
+
+	err := querysql.Query(
+		[]querysql.Target{querysql.SingleInto(&a)},
+		ctx, sqldb, `
+		select 1;
+		select _function='TestFunction', component = 'abc', val=1, time=1.23;
+	`)
+	require.NoError(t, err)
+	assert.Equal(t, 1, a)
+	assert.True(t, testhelper.TestFunctionsCalled["TestFunction"])
 }
 
 func TestPropagateSyntaxError1(t *testing.T) {
