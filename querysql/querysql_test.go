@@ -37,12 +37,13 @@ func TestNewExplainsDatabaseEOF(t *testing.T) {
 	require.ErrorIs(t, rs.Err, io.EOF)
 }
 
-func TestNewLeavesOtherDatabaseErrorsUnadorned(t *testing.T) {
+func TestNewLeavesOtherDatabaseErrorsDiscoverable(t *testing.T) {
 	sqlErr := mssql.Error{Number: 40197, Message: "service error"}
 	rs := querysql.New(context.Background(), errorQuerier{err: sqlErr}, "select 1")
 
-	_, ok := rs.Err.(mssql.Error)
-	require.True(t, ok)
+	var actual mssql.Error
+	require.ErrorAs(t, rs.Err, &actual)
+	require.Equal(t, sqlErr.Number, actual.Number)
 }
 
 // Scan implements the sql.Scanner interface.

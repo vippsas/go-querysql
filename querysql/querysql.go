@@ -78,14 +78,15 @@ func New(ctx context.Context, querier CtxQuerier, qry string, args ...any) *Resu
 	if errors.Is(err, io.EOF) {
 		// An EOF returned by QueryContext means the database connection closed before
 		// the query completed. Add that missing context while preserving EOF for
-		// errors.Is. Other SQL errors must remain unadorned because callers may type
-		// assert them directly, for example to mssql.Error.
+		// errors.Is. Other SQL errors remain unadorned for compatibility, but callers
+		// must use errors.As or errors.Is instead of direct type assertions because
+		// errors may be wrapped.
 		err = fmt.Errorf("database connection closed unexpectedly while executing query: %w", err)
 	}
 	return &ResultSets{
 		Rows:       rows,
 		started:    false,
-		Err:        err,
+		Err:        err, // inspect SQL errors with errors.As or errors.Is, never with direct type assertions
 		Logger:     Logger(ctx),
 		Dispatcher: Dispatcher(ctx),
 	}
