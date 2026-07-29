@@ -80,7 +80,7 @@ func New(ctx context.Context, querier CtxQuerier, qry string, args ...any) *Resu
 		// closure as a bare EOF instead of wrapping it with database context. Add that
 		// context here despite the brittleness of identifying the failure through a
 		// generic sentinel. We preserve EOF via wrapping in case callers depend on it.
-		err = fmt.Errorf("database connection closed unexpectedly while executing query: %w", err)
+		err = fmt.Errorf("querysql: database connection closed unexpectedly while executing query: %w", err)
 	}
 	return &ResultSets{
 		Rows:       rows,
