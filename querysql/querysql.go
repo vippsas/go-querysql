@@ -79,13 +79,13 @@ func New(ctx context.Context, querier CtxQuerier, qry string, args ...any) *Resu
 		// The Microsoft SQL driver unfortunately exposes an unexpected connection
 		// closure as a bare EOF instead of wrapping it with database context. Add that
 		// context here despite the brittleness of identifying the failure through a
-		// generic sentinel, and preserve EOF for errors.Is.
+		// generic sentinel. We preserve EOF via wrapping in case callers depend on it.
 		err = fmt.Errorf("database connection closed unexpectedly while executing query: %w", err)
 	}
 	return &ResultSets{
 		Rows:       rows,
 		started:    false,
-		Err:        err, // inspect SQL errors with errors.As or errors.Is, never with direct type assertions
+		Err:        err, // callers should inspect SQL errors with errors.As or errors.Is, never with direct type assertions
 		Logger:     Logger(ctx),
 		Dispatcher: Dispatcher(ctx),
 	}
