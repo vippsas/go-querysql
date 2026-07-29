@@ -75,10 +75,17 @@ var _closeHook = func(r io.Closer) error {
 
 func New(ctx context.Context, querier CtxQuerier, qry string, args ...any) *ResultSets {
 	rows, err := querier.QueryContext(ctx, qry, args...)
+	if errors.Is(err, io.EOF) {
+		// An EOF returned by QueryContext means the database connection closed before
+		// the query completed. Add that missing context while preserving EOF for
+		// errors.Is. Other SQL errors must remain unadorned because callers may type
+		// assert them directly, for example to mssql.Error.
+		err = fmt.Errorf("database connection closed unexpectedly while executing query: %w", err)
+	}
 	return &ResultSets{
 		Rows:       rows,
 		started:    false,
-		Err:        err, // important to return the error unadorned here, as some code e.g. casts it directly to mssql.Error
+		Err:        err,
 		Logger:     Logger(ctx),
 		Dispatcher: Dispatcher(ctx),
 	}
