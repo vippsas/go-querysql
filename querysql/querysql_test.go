@@ -33,7 +33,7 @@ func (errorQuerier) QueryRowContext(context.Context, string, ...any) *sql.Row {
 func TestNewExplainsDatabaseEOF(t *testing.T) {
 	rs := querysql.New(context.Background(), errorQuerier{err: io.EOF}, "select 1")
 
-	require.EqualError(t, rs.Err, "querysql: database connection closed unexpectedly while executing query: EOF")
+	require.EqualError(t, rs.Err, "querysql: db connection closed unexpectedly while executing query: EOF")
 	require.ErrorIs(t, rs.Err, io.EOF)
 }
 
