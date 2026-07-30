@@ -13,3 +13,9 @@ services:
     environment:
       ACCEPT_EULA: "Y"
       SA_PASSWORD: VippsPw1
+    healthcheck:
+      test: ["CMD", "/opt/mssql-tools18/bin/sqlcmd", "-C", "-S", "localhost", "-U", "sa", "-P", "VippsPw1", "-b", "-Q", "SELECT 1"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
