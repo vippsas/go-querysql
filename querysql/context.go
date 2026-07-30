@@ -23,14 +23,15 @@ func Logger(ctx context.Context) RowsLogger {
 	return nil
 }
 
+// WithDispatcher registers a dispatcher for _function result sets.
 func WithDispatcher(ctx context.Context, dispatcher RowsGoDispatcher) context.Context {
 	return context.WithValue(ctx, ckRowsDispatcher, dispatcher)
 }
 
 func Dispatcher(ctx context.Context) RowsGoDispatcher {
 	l := ctx.Value(ckRowsDispatcher)
-	if l != nil {
-		return l.(RowsGoDispatcher)
+	if l == nil {
+		return nil
 	}
-	return nil
+	return l.(RowsGoDispatcher)
 }
