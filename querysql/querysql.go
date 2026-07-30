@@ -75,10 +75,17 @@ var _closeHook = func(r io.Closer) error {
 
 func New(ctx context.Context, querier CtxQuerier, qry string, args ...any) *ResultSets {
 	rows, err := querier.QueryContext(ctx, qry, args...)
+	if errors.Is(err, io.EOF) {
+		// The Microsoft SQL driver unfortunately exposes an unexpected connection
+		// closure as a bare EOF instead of wrapping it with database context. Add that
+		// context here despite the brittleness of identifying the failure through a
+		// generic sentinel. We preserve EOF via wrapping in case callers depend on it.
+		err = fmt.Errorf("querysql: db connection closed unexpectedly while executing query: %w", err)
+	}
 	return &ResultSets{
 		Rows:       rows,
 		started:    false,
-		Err:        err, // important to return the error unadorned here, as some code e.g. casts it directly to mssql.Error
+		Err:        err, // callers should inspect SQL errors with errors.As or errors.Is, never with direct type assertions
 		Logger:     Logger(ctx),
 		Dispatcher: Dispatcher(ctx),
 	}

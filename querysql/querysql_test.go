@@ -4,9 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"io"
 	"testing"
 	"time"
 
+	mssql "github.com/microsoft/go-mssqldb"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -15,6 +17,34 @@ import (
 )
 
 type MyArray [5]byte
+
+type errorQuerier struct {
+	err error
+}
+
+func (q errorQuerier) QueryContext(context.Context, string, ...any) (*sql.Rows, error) {
+	return nil, q.err
+}
+
+func (errorQuerier) QueryRowContext(context.Context, string, ...any) *sql.Row {
+	return nil
+}
+
+func TestNewExplainsDatabaseEOF(t *testing.T) {
+	rs := querysql.New(context.Background(), errorQuerier{err: io.EOF}, "select 1")
+
+	require.EqualError(t, rs.Err, "querysql: db connection closed unexpectedly while executing query: EOF")
+	require.ErrorIs(t, rs.Err, io.EOF)
+}
+
+func TestNewLeavesOtherDatabaseErrorsDiscoverable(t *testing.T) {
+	sqlErr := mssql.Error{Number: 40197, Message: "service error"}
+	rs := querysql.New(context.Background(), errorQuerier{err: sqlErr}, "select 1")
+
+	var actual mssql.Error
+	require.ErrorAs(t, rs.Err, &actual)
+	require.Equal(t, sqlErr.Number, actual.Number)
+}
 
 // Scan implements the sql.Scanner interface.
 func (u *MyArray) Scan(src interface{}) error {
