@@ -47,7 +47,7 @@ func TestNewLeavesOtherDatabaseErrorsDiscoverable(t *testing.T) {
 }
 
 // Scan implements the sql.Scanner interface.
-func (u *MyArray) Scan(src interface{}) error {
+func (u *MyArray) Scan(src any) error {
 	copy(u[:], src.([]byte))
 	return nil
 }
@@ -114,7 +114,7 @@ select _function='OtherTestFunction', time=42, money=convert(money, 12345.67);
 	logger := logrus.StandardLogger()
 	logger.Hooks.Add(&hook)
 	ctx := querysql.WithLogger(context.Background(), querysql.LogrusMSSQLLogger(logger, logrus.InfoLevel))
-	ctx = querysql.WithDispatcher(ctx, querysql.GoMSSQLDispatcher([]interface{}{
+	ctx = querysql.WithDispatcher(ctx, querysql.GoMSSQLDispatcher([]any{
 		testhelper.TestFunction,
 		testhelper.OtherTestFunction,
 	}))
@@ -258,7 +258,7 @@ func TestDispatcherSetupError(t *testing.T) {
 	}()
 
 	ctx := querysql.WithLogger(context.Background(), querysql.LogrusMSSQLLogger(logger, logrus.InfoLevel))
-	ctx = querysql.WithDispatcher(ctx, querysql.GoMSSQLDispatcher([]interface{}{
+	ctx = querysql.WithDispatcher(ctx, querysql.GoMSSQLDispatcher([]any{
 		"SomethingThatIsNotAFunctionPointer", // This should cause a panic
 	}))
 	// Nothing here gets executed because we expect the WithDispatcher to have panicked
@@ -319,7 +319,7 @@ func TestDispatcherRuntimeErrorsAndCornerCases(t *testing.T) {
 	logger := logrus.StandardLogger()
 	logger.Hooks.Add(&hook)
 	ctx := querysql.WithLogger(context.Background(), querysql.LogrusMSSQLLogger(logger, logrus.InfoLevel))
-	ctx = querysql.WithDispatcher(ctx, querysql.GoMSSQLDispatcher([]interface{}{
+	ctx = querysql.WithDispatcher(ctx, querysql.GoMSSQLDispatcher([]any{
 		testhelper.TestFunction,
 		testhelper.OtherTestFunction,
 	}))
@@ -617,7 +617,7 @@ func TestOptionalField_AbsentFromQuery(t *testing.T) {
 	// An optional field that has no matching SQL column keeps its zero value.
 	type rowWithOptional struct {
 		X int
-		Y int    `refl:"optional"`
+		Y int `refl:"optional"`
 	}
 
 	rows, err := querysql.Slice[rowWithOptional](context.Background(), sqldb, `select 1 as X`)
@@ -700,7 +700,7 @@ select _function='TestFunction', component = 'abc', val=1, time=1.23;
 	logger := logrus.StandardLogger()
 	logger.Hooks.Add(&hook)
 	ctx := querysql.WithLogger(context.Background(), querysql.LogrusMSSQLLogger(logger, logrus.InfoLevel))
-	ctx = querysql.WithDispatcher(ctx, querysql.GoMSSQLDispatcher([]interface{}{
+	ctx = querysql.WithDispatcher(ctx, querysql.GoMSSQLDispatcher([]any{
 		testhelper.TestFunction,
 	}))
 	testhelper.ResetTestFunctionsCalled()
@@ -834,7 +834,7 @@ select _function='ReturnAnonFunc', label = 'myLabel', time=1.23;
 	logger := logrus.StandardLogger()
 	logger.Hooks.Add(&hook)
 	ctx := querysql.WithLogger(context.Background(), querysql.LogrusMSSQLLogger(logger, logrus.InfoLevel))
-	ctx = querysql.WithDispatcher(ctx, querysql.GoMSSQLDispatcher([]interface{}{
+	ctx = querysql.WithDispatcher(ctx, querysql.GoMSSQLDispatcher([]any{
 		testhelper.TestFunction,
 		testhelper.ReturnAnonFunc("myComponent"),
 	}))
@@ -865,7 +865,7 @@ func TestDispatcherPanicsWithTwoAnonFuncs(t *testing.T) {
 	}()
 
 	ctx := querysql.WithLogger(context.Background(), querysql.LogrusMSSQLLogger(logger, logrus.InfoLevel))
-	ctx = querysql.WithDispatcher(ctx, querysql.GoMSSQLDispatcher([]interface{}{
+	ctx = querysql.WithDispatcher(ctx, querysql.GoMSSQLDispatcher([]any{
 		testhelper.ReturnAnonFunc("myComponent"),
 		testhelper.ReturnAnonFunc("myComponent2"), // This should cause a panic
 	}))

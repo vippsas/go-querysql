@@ -123,7 +123,7 @@ func Parse(value string) (Money, error) {
 	return Money{Data: sign * int64(cc)}, nil
 }
 
-func (target *Money) Scan(value interface{}) error {
+func (target *Money) Scan(value any) error {
 	// if value is nil, false
 	if value != nil {
 		var strvalue string
