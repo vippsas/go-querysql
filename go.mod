@@ -4,7 +4,7 @@ go 1.25.7
 
 require (
 	github.com/google/uuid v1.6.0
-	github.com/microsoft/go-mssqldb v1.10.0
+	github.com/microsoft/go-mssqldb v1.11.0
 	github.com/sirupsen/logrus v1.10.1
 	github.com/stretchr/testify v1.12.1
 	golang.org/x/net v0.58.0
