@@ -238,7 +238,7 @@ select 2;
 
 	// throw 55002, 'Here is an error.', 1;
 	_, err = querysql.NextResult(rs, querysql.SingleOf[row])
-	assert.Equal(t, "mssql: Here is an error", err.Error())
+	assert.Equal(t, "mssql: Here is an error (55002)", err.Error())
 
 	// Check that we have exhausted the logging select before we do the call that gets ErrNoMoreSets
 	assert.Equal(t, []logrus.Fields{
@@ -483,7 +483,7 @@ values (42);
 	_, errExec := querysql.ExecContext(context.Background(), sqldb, qry, "world")
 	assert.Error(t, errExec)
 	assert.Equal(t,
-		"mssql: Cannot insert the value NULL into column 'Username', table 'master.dbo.MyUsers'; column does not allow nulls. INSERT fails.",
+		"mssql: Cannot insert the value NULL into column 'Username', table 'master.dbo.MyUsers'; column does not allow nulls. INSERT fails. (515)",
 		errExec.Error(),
 	)
 
